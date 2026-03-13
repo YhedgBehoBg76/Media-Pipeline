@@ -20,6 +20,7 @@ class MediaItem(Base):
     __tablename__ = "media_items"
 
     id = Column(Integer, primary_key=True, index=True)
+    video_id = Column(String, index=True),
     source_id = Column(Integer, nullable=False)
     original_url = Column(String, nullable=True)
     s3_path = Column(String, nullable=True)
