@@ -1,9 +1,11 @@
 from fastapi import FastAPI
-from app.api.routes import sources
+from app.api.routes import sources, media
+from app.core.database import engine, Base
+
+
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Media Pipeline")
-app.include_router(sources.router, prefix="/api/v1")
 
-@app.get("/health")
-def health_check():
-    return {"status": "ok"}
+app.include_router(sources.router, tags=['sources'])
+app.include_router(media.router, tags=['media'])

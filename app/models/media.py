@@ -1,3 +1,5 @@
+from email.policy import default
+
 from sqlalchemy import Column, Integer, String, DateTime, Enum
 from sqlalchemy.sql import func
 
@@ -22,4 +24,5 @@ class MediaItem(Base):
     original_url = Column(String, nullable=True)
     s3_path = Column(String, nullable=True)
     status = Column(Enum(Status), default=Status.PENDING)
+    used_strategy = Column(String)
     created_at = Column(DateTime, server_default=func.now())
