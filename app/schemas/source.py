@@ -1,7 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 
-
 #TODO: сделать отдельные схемы config для разных типов источников
 #  и убрать метод validate_config из SourceAdapter
 
