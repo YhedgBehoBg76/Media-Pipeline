@@ -26,19 +26,31 @@ def scan_source(source_id: int, db: Session = Depends(get_db)):
 
     try:
         adapter = SourceAdapterFactory.get_adapter(source.type)
+
+        if hasattr(adapter, '_db_session'):
+            adapter._db_session = db
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     config = json.loads(source.config) if source.config else {}
+
+    if not adapter.validate_config(config):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid source configuration"
+        )
+
     videos = adapter.get_new_content(config)
 
     created_items: List[MediaItem] = []
     for video in videos:
         media_item = MediaItem(
-            source_id = source.id,
-            original_url = video['url'],
-            status = Status.PENDING,
-            used_strategy = source.strategy
+            video_id=video['video_id'],
+            source_id=source.id,
+            original_url=video['url'],
+            status=Status.PENDING,
+            used_strategy=source.strategy
         )
 
         db.add(media_item)
