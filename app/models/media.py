@@ -10,8 +10,11 @@ import enum
 
 class Status(enum.Enum):
     PENDING = "pending"
+    DOWNLOADING = "downloading"
     DOWNLOADED = "downloaded"
+    PROCESSING = "processing"
     PROCESSED = "processed"
+    PUBLISHING = "publishing"
     PUBLISHED = "published"
     FAILED = "failed"
 
