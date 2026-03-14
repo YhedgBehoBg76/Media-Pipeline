@@ -35,6 +35,14 @@ def scan_source(source_id: int, db: Session = Depends(get_db)):
 
     config = source.config if source.config else {}
 
+    def on_state_update(state:dict):
+        config.update(state)
+        source.config = json.dumps(config)
+        db.commit()
+
+    if hasattr(adapter, '_on_state_update'):
+        adapter._on_state_update = on_state_update
+
     if not adapter.validate_config(config):
         raise HTTPException(
             status_code=400,

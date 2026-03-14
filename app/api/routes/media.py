@@ -9,6 +9,6 @@ router = APIRouter()
 
 @router.get("/media/")
 def get_all_media_items(db: Session = Depends(get_db)):
-    media = db.query(MediaItem).first()
+    media = db.query(MediaItem).all()
 
     return media

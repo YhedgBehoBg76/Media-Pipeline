@@ -28,7 +28,7 @@ def process_video_task(media_id: int):
     media.status = Status.PROCESSED
     db.commit()
 
-    upload_video_task()
+    upload_video_task(media_id)
 
 @celery_app.task
 def upload_video_task(media_id: int):
