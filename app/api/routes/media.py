@@ -7,10 +7,8 @@ from fastapi import APIRouter, Depends
 
 router = APIRouter()
 
-# @router.get("/media/")
-# def get_downloaded_media(media_id: int, db: Session = Depends(get_db)):
-#     media = db.query(MediaItem).filter(MediaItem.id == media_id).first()
-#
-#     return {
-#         "url": media.original_url,
-#     }
+@router.get("/media/")
+def get_all_media_items(db: Session = Depends(get_db)):
+    media = db.query(MediaItem).first()
+
+    return media

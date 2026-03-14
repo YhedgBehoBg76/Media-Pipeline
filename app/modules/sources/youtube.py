@@ -21,7 +21,7 @@ class YouTubeAdapter(SourceAdapter):
     ALLOWED_ORDERS = {"date", "rating", "relevance", "title", "videoCount", "viewCount"}
 
     DEFAULT_RESULTS_PER_REQUEST = 10
-    DEFAULT_LICESNCE = "creativeCommon"
+    DEFAULT_LICENSE = "creativeCommon"
     DEFAULT_ORDER = "rating"
 
     MAX_RESULTS_PER_REQUEST = 50
@@ -67,7 +67,7 @@ class YouTubeAdapter(SourceAdapter):
             HttpError: Если YouTube API вернул ошибку
         """
         query = config.get("query", "")
-        license_filter = config.get("license", self.DEFAULT_LICESNCE)
+        license_filter = config.get("license", self.DEFAULT_LICENSE)
         max_results = min(
             config.get("max_results", self.DEFAULT_RESULTS_PER_REQUEST),
             self.MAX_RESULTS_PER_REQUEST
@@ -113,17 +113,25 @@ class YouTubeAdapter(SourceAdapter):
         if not config.get("query"):
             return False
 
-        license_filter = config.get("license", "creativeCommon")
+        license_filter = config.get("license", self.DEFAULT_LICENSE)
         if license_filter not in self.ALLOWED_LICENSES:
             return False
 
-        order = config.get("order", "relevance")
+        order = config.get("order", self.DEFAULT_ORDER)
         if order not in self.ALLOWED_ORDERS:
             return False
 
         max_results = config.get("max_results", self.DEFAULT_RESULTS_PER_REQUEST)
-        if not isinstance(max_results, int) or not (1 <= max_results <= self.MAX_RESULTS_PER_REQUEST):
+        if not isinstance(max_results, int):
+            try:
+                max_results = int(max_results)
+            except ValueError:
+                return False
+
+        if not (1 <= max_results <= self.MAX_RESULTS_PER_REQUEST):
             return False
+
+        return True
 
     def _get_youtube_client(self):
         """Ленивая инициализация Youtube клиента"""
@@ -136,7 +144,7 @@ class YouTubeAdapter(SourceAdapter):
             self._youtube = build(
                 'youtube',
                 'v3',
-                developerkey=settings.YOUTUBE_API_KEY,
+                developerKey=settings.YOUTUBE_API_KEY,
                 cache_discovery=False
             )
         return self._youtube

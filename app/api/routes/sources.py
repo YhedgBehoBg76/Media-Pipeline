@@ -33,7 +33,7 @@ def scan_source(source_id: int, db: Session = Depends(get_db)):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    config = json.loads(source.config) if source.config else {}
+    config = source.config if source.config else {}
 
     if not adapter.validate_config(config):
         raise HTTPException(
