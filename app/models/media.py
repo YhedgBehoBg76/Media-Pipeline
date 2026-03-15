@@ -14,6 +14,8 @@ class Status(enum.Enum):
     DOWNLOADED = "downloaded"
     PROCESSING = "processing"
     PROCESSED = "processed"
+    UPLOADING = "uploading"
+    UPLOADED = "uploaded"
     PUBLISHING = "publishing"
     PUBLISHED = "published"
     FAILED = "failed"
