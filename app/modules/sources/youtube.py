@@ -8,8 +8,8 @@ from app.core.config import settings
 from app.models.media import MediaItem
 from abc import abstractmethod
 
-#TODO: 1. Сделать отсеивание шортсов. Сейчас он находит и сохраняет в MediaItem ссылки на шортсы
-#TODO: 2. Надо чето сделать с _on_state_update. Возможно стоит добавить это поле в SourceAdapter
+#TODO: 2. Сделать отсеивание шортсов в YoutubeSearchAdapter. Сейчас он находит и сохраняет в MediaItem ссылки на шортсы
+#TODO: 3. Надо чето сделать с _on_state_update. Возможно стоит добавить это поле в SourceAdapter
 
 class BaseYoutubeAdapter(SourceAdapter):
     ALLOWED_LICENSES = {"any", "creativeCommon"}
@@ -67,15 +67,15 @@ class BaseYoutubeAdapter(SourceAdapter):
         if not self._db_session or not videos:
             return videos
 
-        new_video_ids = {v["video_id"] for v in videos}
+        new_video_ids = {v["external_id"] for v in videos}
 
-        existing = self._db_session.query(MediaItem.video_id).filter(
+        existing = self._db_session.query(MediaItem.external_id_id).filter(
             MediaItem.video_id.in_(new_video_ids)
         ).all()
 
         existing_ids = {row[0] for row in existing if row[0]}
 
-        return [v for v in videos if v["video_id"] not in existing_ids]
+        return [v for v in videos if v["external_id"] not in existing_ids]
 
     def _get_quota_info(self) -> dict:
         """
@@ -112,14 +112,20 @@ class BaseYoutubeAdapter(SourceAdapter):
                 continue
 
             videos.append({
-                "video_id": video_id,
                 "url": f"https://youtube.com/watch?v={video_id}",
-                "title": snippet.get("title", "Untitled"),
-                "description": snippet.get("description", ""),
-                "channel_title": snippet.get("channelTitle", ""),
-                "published_at": snippet.get("publishedAt", ""),
-                "source_type": "youtube",
-                "thumbnail": snippet.get("thumbnails", {}).get("high", {}).get("url", "")
+                "source_type": "youtube_search",
+                "external_id": video_id,
+
+                "metadata":
+                    {
+                        "title": snippet.get("title", "Untitled"),
+                        "description": snippet.get("description", ""),
+                        "tags": snippet.get("tags", ""),
+
+                        "channel_title": snippet.get("channelTitle", ""),
+                        "published_at": snippet.get("publishedAt", ""),
+                        "thumbnail": snippet.get("thumbnails", {}).get("high", {}).get("url", "")
+                    }
             })
 
         return videos
@@ -150,13 +156,19 @@ class YouTubeSearchAdapter(BaseYoutubeAdapter):
             query
 
         Returns:
-            Список словарей с информацией о видео:
+            Список новых видео в формате:
                 [
                     {
-                        "video_id": "abc123",
                         "url": "https://youtube.com/watch?v=abc123",
-                        "title": "Video Title",
-                        "source_type": "youtube"
+                        "source_type": "youtube_channels",
+                        "external_id": "abc123",
+
+                        "metadata":
+                        {
+                            "title": "Video Title",
+                            "description": "Video Description",
+                            "tags": ["spongebob", "cartoon" ...],
+                        }
                     }
                 ]
 
@@ -265,10 +277,16 @@ class YoutubeChannelsAdapter(BaseYoutubeAdapter):
             Список новых видео в формате:
                 [
                     {
-                        "video_id": "abc123",
                         "url": "https://youtube.com/watch?v=abc123",
-                        "title": "Video Title",
-                        "source_type": "youtube_channels"
+                        "source_type": "youtube_channels",
+                        "external_id": "abc123",
+
+                        "metadata":
+                        {
+                            "title": "Video Title",
+                            "description": "Video Description",
+                            "tags": ["spongebob", "cartoon" ...]
+                        }
                     }
                 ]
         """

@@ -4,6 +4,7 @@ import os
 from app.modules.downloaders.base import DownloaderAdapter
 from app.models.media import MediaItem
 
+#TODO: 1. Скачивание не работает. Видимо из-за того, что youtube заблокирован в роcсии
 
 class YoutubeDownloader(DownloaderAdapter):
 
@@ -30,7 +31,11 @@ class YoutubeDownloader(DownloaderAdapter):
         ydl_opts = {
             'format': test_format if test else video_format,
             'outtmpl': output_path,
-            'nonplaylist': True
+            'geo_bypass': True,
+            'geo_bypass_country': 'US',
+            'socket_timeout': 30,
+            'retries': 3,
+            'noplaylist': True
         }
 
         try:

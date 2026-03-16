@@ -6,7 +6,8 @@ from app.modules.downloaders.youtube import YoutubeDownloader
 
 class DownloaderFactory:
     _adapters: Dict[str, Type[DownloaderAdapter]] = {
-        "youtube": YoutubeDownloader
+        "youtube_channels": YoutubeDownloader,
+        "youtube_search": YoutubeDownloader
     }
 
     @classmethod

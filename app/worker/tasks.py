@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 
+DEFAULT_UPLOADER = "youtube_shorts"
+
 def get_db_session():
     """Создаёт новую сессию БД (локально для каждой задачи)"""
     return SessionLocal()
@@ -247,8 +249,8 @@ def publish_video_task(self, task_result: dict):
         download_from_s3(s3_path, temp_path)  # ← Нужна helper-функция
 
         # Публикуем
-        uploader = UploaderFactory.get_uploader("youtube")
-        youtube_url = uploader.upload(
+        uploader = UploaderFactory.get_uploader(DEFAULT_UPLOADER)
+        url = uploader.upload(
             temp_path,
             params={
                 "title": f"Shorts #{media_id}",
@@ -257,13 +259,13 @@ def publish_video_task(self, task_result: dict):
             }
         )
 
-        logger.info(f"Published to: {youtube_url}")
+        logger.info(f"Published to: {url}")
 
         # Обновляем БД
         media.status = Status.PUBLISHED
         db.commit()
 
-        return {"media_id": media_id, "youtube_url": youtube_url}
+        return {"media_id": media_id, "url": url}
 
     except Exception as e:
         logger.error(f"Publishing failed: {str(e)}")

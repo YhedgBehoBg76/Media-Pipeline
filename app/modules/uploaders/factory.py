@@ -4,14 +4,14 @@ from app.modules.uploaders.base import UploaderAdapter
 from app.modules.uploaders.s3_uploader import S3Uploader
 
 
-# from app.modules.uploaders.youtube_uploader import YouTubeUploader
+from app.modules.uploaders.youtube_uploader import YouTubeUploader
 
 class UploaderFactory:
     """Фабрика для создания загрузчиков"""
 
     _uploaders: Dict[str, Type[UploaderAdapter]] = {
         "s3": S3Uploader,
-        # "youtube": YouTubeUploader,  # ← Будущий
+        "youtube_shorts": YouTubeUploader,
         # "tiktok": TikTokUploader,    # ← Будущий
     }
 

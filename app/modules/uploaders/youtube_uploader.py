@@ -10,7 +10,7 @@ class YouTubeUploader(UploaderAdapter):
 
     @property
     def name(self) -> str:
-        return "youtube"
+        return "youtube_shorts"
 
     def upload(self, file_path: str, params: dict) -> str:
         """

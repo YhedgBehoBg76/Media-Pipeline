@@ -1,5 +1,6 @@
 
 import json
+from importlib.metadata import metadata
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -54,11 +55,12 @@ def scan_source(source_id: int, db: Session = Depends(get_db)):
     created_items: List[MediaItem] = []
     for video in videos:
         media_item = MediaItem(
-            video_id=video['video_id'],
+            external_id=video['external_id'],
             source_id=source.id,
             original_url=video['url'],
             status=Status.PENDING,
-            used_strategy=source.strategy
+            used_strategy=source.strategy,
+            metadata=json.dumps(videos["metadata"])
         )
 
         db.add(media_item)
@@ -90,7 +92,7 @@ def list_sources(db: Session = Depends(get_db)):
 @router.post("/sources", response_model=SourceResponse)
 def create_source(source: SourceCreate, db: Session = Depends(get_db)):
     # Создание нового источника
-    config_json = json.dumps(source.config) if source.config else None
+    config_json = source.config if source.config else None
 
     db_source = Source(
         type=source.type,
