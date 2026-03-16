@@ -60,7 +60,7 @@ def scan_source(source_id: int, db: Session = Depends(get_db)):
             original_url=video['url'],
             status=Status.PENDING,
             used_strategy=source.strategy,
-            metadata=json.dumps(videos["metadata"])
+            video_metadata=json.dumps(videos["metadata"])
         )
 
         db.add(media_item)

@@ -32,4 +32,4 @@ class MediaItem(Base):
     status = Column(Enum(Status), default=Status.PENDING)
     used_strategy = Column(String)
     created_at = Column(DateTime, server_default=func.now())
-    metadata = Column(JSON, nullable=True)
+    video_metadata = Column(JSON, nullable=True)

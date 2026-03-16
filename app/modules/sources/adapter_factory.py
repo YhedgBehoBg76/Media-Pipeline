@@ -1,15 +1,15 @@
 from typing import Dict, Type
 from app.modules.sources.base import SourceAdapter
 from app.modules.sources.youtube import YouTubeSearchAdapter, YoutubeChannelsAdapter
+from app.modules.sources.filesystem import FilesystemAdapter
 
-
-#from app.modules.sources.filesystem import FilesystemAdapter
 #from app.modules.sources.twich import TwichAdapter
 
 class SourceAdapterFactory:
     _adapters: Dict[str, Type[SourceAdapter]] = {
         "youtube_search": YouTubeSearchAdapter,
-        "youtube_channels": YoutubeChannelsAdapter
+        "youtube_channels": YoutubeChannelsAdapter,
+        "filesystem": FilesystemAdapter
     }
 
     @classmethod
