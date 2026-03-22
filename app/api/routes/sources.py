@@ -16,7 +16,21 @@ from app.schemas.source import SourceResponse, SourceCreate
 
 router = APIRouter()
 
-@router.get("/sources/{source_id}/scan", response_model=ScanResponse)
+
+@router.get("/sources/available-types")
+def get_available_source_types():
+    """Возвращает список поддерживаемых типов источников"""
+    return {
+        "available_types": SourceAdapterFactory.get_available_types()
+    }
+
+
+@router.get("/sources")
+def list_sources(db: Session = Depends(get_db)):
+    return db.query(Source).all()
+
+
+@router.post("/sources/{source_id}/scan", response_model=ScanResponse)
 def scan_source(source_id: int, db: Session = Depends(get_db)):
     source = db.query(Source).filter(Source.id == source_id).first()
 
@@ -67,27 +81,14 @@ def scan_source(source_id: int, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(media_item)
 
-        process_media_pipeline.delay(media_item.id)
-
         created_items.append(media_item)
 
     return {
         "source_id": source_id,
         "videos_found": len(videos),
-        "tasks_created": len(created_items),
         "media_items": created_items
     }
 
-@router.get("/sources/available-types")
-def get_available_source_types():
-    """Возвращает список поддерживаемых типов источников"""
-    return {
-        "available_types": SourceAdapterFactory.get_available_types()
-    }
-
-@router.get("/sources")
-def list_sources(db: Session = Depends(get_db)):
-    return db.query(Source).all()
 
 @router.post("/sources", response_model=SourceResponse)
 def create_source(source: SourceCreate, db: Session = Depends(get_db)):

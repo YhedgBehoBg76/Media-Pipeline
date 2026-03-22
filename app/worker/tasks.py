@@ -156,7 +156,6 @@ def process_video_task(self, task_result: dict):
         if not source:
             raise Exception(f"Source not found for media {media_id}")
 
-        # Парсим стратегию
         try:
             strategy_config = json.loads(source.strategy)
         except (json.JSONDecodeError, TypeError):
@@ -164,7 +163,6 @@ def process_video_task(self, task_result: dict):
 
         update_status(media_id, Status.PROCESSING)
 
-        # Обрабатываем
         processor = ProcessorFactory.get_processor(strategy_config)
         processed_path = f"/tmp/media/{media_id}_processed.mp4"
 
@@ -173,7 +171,6 @@ def process_video_task(self, task_result: dict):
 
         update_status(media_id, Status.PROCESSED)
 
-        # ← Передаём путь дальше
         return {"media_id": media_id, "processed_path": processed_path}
 
     except Exception as e:
@@ -183,7 +180,6 @@ def process_video_task(self, task_result: dict):
 
     finally:
         db.close()
-        # ← Очищаем скачанный файл
         if local_path and os.path.exists(local_path):
             os.remove(local_path)
 
@@ -197,12 +193,10 @@ def upload_video_task(self, task_result: dict):
     try:
         update_status(media_id, Status.UPLOADING)
 
-        # Загружаем
         uploader = UploaderFactory.get_uploader("s3")
         s3_path = uploader.upload(processed_path, params={"prefix": "processed"})
         logger.info(f"Uploaded to: {s3_path}")
 
-        # ← Обновляем s3_path в БД
         db = get_db_session()
         try:
             media = db.query(MediaItem).filter(MediaItem.id == media_id).first()
@@ -221,7 +215,6 @@ def upload_video_task(self, task_result: dict):
         raise self.retry(exc=e, countdown=60)
 
     finally:
-        # ← Очищаем обработанный файл
         if processed_path and os.path.exists(processed_path):
             os.remove(processed_path)
 
@@ -235,7 +228,7 @@ def publish_video_task(self, task_result: dict):
         return {"media_id": task_result['media_id'], "url": "mock://published"}
 
     media_id = task_result["media_id"]
-    s3_path = task_result.get("s3_path")  # ← Из предыдущей задачи
+    s3_path = task_result.get("s3_path")
     db = get_db_session()
     temp_path = f"/tmp/media/{media_id}_for_upload.mp4"
 
@@ -245,19 +238,15 @@ def publish_video_task(self, task_result: dict):
             update_status(media_id, Status.FAILED)
             raise Exception("s3_path is None - upload task may have failed")
 
-        # Обновляем статус
         update_status(media_id, Status.PUBLISHING)
 
-        # Получаем метаданные из Source или MediaItem
         media = db.query(MediaItem).filter(MediaItem.id == media_id).first()
         source = db.query(Source).filter(Source.id == media.source_id).first()
 
-        # ← Загружаем из S3 во временный файл для YouTube API
-        # (YouTube API требует локальный файл)
-        download_from_s3(s3_path, temp_path)  # ← Нужна helper-функция
+        download_from_s3(s3_path, temp_path)
 
         metadata = media.video_metadata or {}
-        # Публикуем
+
         uploader = UploaderFactory.get_uploader(DEFAULT_UPLOADER)
         url = uploader.upload(
             temp_path,
@@ -271,7 +260,6 @@ def publish_video_task(self, task_result: dict):
 
         logger.info(f"Published to: {url}")
 
-        # Обновляем БД
         media.status = Status.PUBLISHED
         db.commit()
 
@@ -284,7 +272,6 @@ def publish_video_task(self, task_result: dict):
 
     finally:
         db.close()
-        # Очищаем временный файл
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
 
