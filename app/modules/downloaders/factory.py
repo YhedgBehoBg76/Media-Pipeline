@@ -2,12 +2,14 @@
 from typing import Dict, Type
 from app.modules.downloaders.base import DownloaderAdapter
 from app.modules.downloaders.youtube import YoutubeDownloader
+from app.modules.downloaders.filesystem import FilesystemDownloader
 
 
 class DownloaderFactory:
     _adapters: Dict[str, Type[DownloaderAdapter]] = {
         "youtube_channels": YoutubeDownloader,
-        "youtube_search": YoutubeDownloader
+        "youtube_search": YoutubeDownloader,
+        "filesystem": FilesystemDownloader
     }
 
     @classmethod

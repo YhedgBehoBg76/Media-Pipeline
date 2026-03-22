@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from app.api.routes import sources, media
 from app.core.database import engine, Base
+from app.worker.utils import ensure_bucket_exists
 
 
 #TODO
@@ -19,6 +20,8 @@ from app.core.database import engine, Base
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Media Pipeline")
+
+ensure_bucket_exists()
 
 app.include_router(sources.router, tags=['sources'])
 app.include_router(media.router, tags=['media'])

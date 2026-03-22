@@ -229,13 +229,21 @@ def upload_video_task(self, task_result: dict):
 @celery_app.task(bind=True, max_retries=3)
 def publish_video_task(self, task_result: dict):
     """Задача 4: Публикация на YouTube"""
+
+    if not os.getenv("YOUTUBE_PUBLISH_ENABLED", "false").lower() == "true":
+        logger.warning(f"Skipping publish for media {task_result['media_id']} (disabled)")
+        return {"media_id": task_result['media_id'], "url": "mock://published"}
+
     media_id = task_result["media_id"]
     s3_path = task_result.get("s3_path")  # ← Из предыдущей задачи
     db = get_db_session()
     temp_path = f"/tmp/media/{media_id}_for_upload.mp4"
 
     try:
-
+        if not s3_path:
+            logger.error(f"Media {media_id}: s3_path is None in task_result: {task_result}")
+            update_status(media_id, Status.FAILED)
+            raise Exception("s3_path is None - upload task may have failed")
 
         # Обновляем статус
         update_status(media_id, Status.PUBLISHING)
@@ -248,13 +256,15 @@ def publish_video_task(self, task_result: dict):
         # (YouTube API требует локальный файл)
         download_from_s3(s3_path, temp_path)  # ← Нужна helper-функция
 
+        metadata = media.video_metadata or {}
         # Публикуем
         uploader = UploaderFactory.get_uploader(DEFAULT_UPLOADER)
         url = uploader.upload(
             temp_path,
             params={
-                "title": f"Shorts #{media_id}",
-                "description": f"Auto-generated from {source.type}",
+                "title": metadata.get("title"),
+                "description": metadata.get("description"),
+                "tags": metadata.get("tags", []),
                 "media_id": media_id
             }
         )

@@ -56,14 +56,14 @@ class SourceAdapter(ABC):
         Возвращает путь к .meta.json файлу для видео.
         Формат: /path/to/video.mp4 → /path/to/video.meta.json
         """
-        return video_path.parent / f"{video_path.stem}.meta.json"
+        return Path(f"{video_path.parent}/{video_path.stem}.meta.json")
 
     @staticmethod
     def _get_base_meta_file_path(folder_path: Path) -> Path:
         """
         Возвращает путь к base.meta.json в папке.
         """
-        return folder_path / "base.meta.json"
+        return Path(f"{folder_path}/base.meta.json")
 
     @staticmethod
     def _merge_metadata(base: dict, individual: dict, filename: str) -> dict:

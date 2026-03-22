@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import List, Dict
 from app.modules.sources.base import SourceAdapter
 
-#TODO: доделать FileSystemAdapter, сделать для него адаптеры скачивания, загрузки для MVP, чтобы не ебаться с ютубом
 
 logger = logging.getLogger(__name__)
 
@@ -80,12 +79,15 @@ class FilesystemAdapter(SourceAdapter):
     def validate_config(self, config: dict) -> bool:
         path = config.get("path")
         if not path:
+            print("NO PATH")
             return False
 
         if not os.path.exists(path):
+            print(f"PATH DOES NOT EXISTS: {path}")
             return False
 
         if not os.path.isdir(path):
+            print("PATH IS NOT A DIR")
             return False
 
         return True

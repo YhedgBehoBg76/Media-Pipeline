@@ -9,3 +9,6 @@ celery==5.3.6
 boto3==1.34.34
 yt-dlp==2023.12.30
 google-api-python-client==2.111.0
+google-auth==2.25.2
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0

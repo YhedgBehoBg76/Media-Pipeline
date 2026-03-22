@@ -1,66 +1,49 @@
-
+# app/modules/uploaders/youtube_uploader.py
+import os
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-from app.core.config import settings
 from app.modules.uploaders.base import UploaderAdapter
+from app.modules.uploaders.youtube_auth import get_authenticated_client
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class YouTubeUploader(UploaderAdapter):
-    """Загрузчик на YouTube Shorts"""
+    PRIVACY_STATUS = 'private'
+    CATEGORY_ID = '22'
 
     @property
     def name(self) -> str:
         return "youtube_shorts"
 
     def upload(self, file_path: str, params: dict) -> str:
-        """
-        Загружает видео на YouTube.
+        token_path = os.getenv("GOOGLE_TOKEN_PATH", "/app/secrets/token.pickle")
 
-        Args:
-            file_path: Путь к видеофайлу
-            params: Метаданные (title, description, tags)
+        youtube = get_authenticated_client(token_path)
 
-        Returns:
-            YouTube video ID
-        """
-        # Инициализация YouTube API
-        youtube = build(
-            'youtube',
-            'v3',
-            developerKey=settings.YOUTUBE_API_KEY
-        )
+        title = params.get("title", f"Shorts {params.get('media_id')}")[:100]
+        description = params.get("description", "")[:5000]
+        tags = params.get("tags", [])[:30]
 
-        # Метаданные видео
-        title = params.get("title", f"Shorts {params.get('media_id', 'unknown')}")
-        description = params.get("description", "")
-        tags = params.get("tags", ["shorts"])
-
-        body = {
-            'snippet': {
-                'title': title[:100],  # Лимит YouTube
-                'description': description[:5000],
-                'tags': tags
-            },
-            'status': {
-                'privacyStatus': params.get("privacy", "public")  # public, private, unlisted
-            }
-        }
-
-        # Загрузка файла
-        media = MediaFileUpload(
-            file_path,
-            chunksize=-1,
-            resumable=True,
-            mimetype='video/mp4'
-        )
+        media = MediaFileUpload(file_path, chunksize=-1, resumable=True, mimetype='video/mp4')
 
         request = youtube.videos().insert(
-            part=','.join(body.keys()),
-            body=body,
+            part="snippet,status",
+            body={
+                "snippet": {"title": title, "description": description, "tags": tags, "categoryId": self.CATEGORY_ID},
+                "status": {"privacyStatus": self.PRIVACY_STATUS, "selfDeclaredMadeForKids": False}
+            },
             media_body=media
         )
 
-        response = request.next_chunk()
-        video_id = response[1]['id']
+        response = None
+        while response is None:
+            status, response = request.next_chunk()
+            if status:
+                logger.info(f"Uploaded {int(status.progress() * 100)}%")
 
-        return f"https://youtube.com/shorts/{video_id}"
+        video_id = response['id']
+        url = f"https://youtube.com/shorts/{video_id}"
+        logger.info(f"Published: {url}")
+        return url
