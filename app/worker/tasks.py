@@ -288,7 +288,6 @@ def process_media_pipeline(media_id: int):
         download_video_task.s(media_id),
         process_video_task.s(),
         upload_video_task.s(),
-        publish_video_task.s()
     )
 
     return workflow.apply_async()

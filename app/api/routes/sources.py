@@ -81,11 +81,14 @@ def scan_source(source_id: int, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(media_item)
 
+        process_media_pipeline.delay(media_item.id)
+
         created_items.append(media_item)
 
     return {
         "source_id": source_id,
         "videos_found": len(videos),
+        "tasks_created": len(created_items),
         "media_items": created_items
     }
 

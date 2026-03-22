@@ -17,6 +17,7 @@ class Status(enum.Enum):
     UPLOADING = "uploading"
     UPLOADED = "uploaded"
     PUBLISHING = "publishing"
+    PARTIALLY_PUBLISHED = "partially_published"
     PUBLISHED = "published"
     FAILED = "failed"
 
@@ -31,5 +32,6 @@ class MediaItem(Base):
     s3_path = Column(String, nullable=True)
     status = Column(Enum(Status), default=Status.PENDING)
     used_strategy = Column(String)
-    created_at = Column(DateTime, server_default=func.now())
     video_metadata = Column(JSON, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
