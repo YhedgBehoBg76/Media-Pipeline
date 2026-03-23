@@ -8,7 +8,7 @@ from app.core.database import Base
 import enum
 
 
-class Status(enum.Enum):
+class MediaStatus(enum.Enum):
     PENDING = "pending"
     DOWNLOADING = "downloading"
     DOWNLOADED = "downloaded"
@@ -30,7 +30,7 @@ class MediaItem(Base):
     source_id = Column(Integer, nullable=False)
     original_url = Column(String, nullable=True)
     s3_path = Column(String, nullable=True)
-    status = Column(Enum(Status), default=Status.PENDING)
+    status = Column(Enum(MediaStatus), default=MediaStatus.PENDING)
     used_strategy = Column(String)
     video_metadata = Column(JSON, nullable=True)
     created_at = Column(DateTime, server_default=func.now())

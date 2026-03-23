@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean
+from sqlalchemy import Column, Integer, String, Boolean, JSON
 from app.core.database import Base
 from app.core.types import JSONString
 
@@ -10,3 +10,4 @@ class Source(Base):
     config = Column(JSONString, nullable=True)  # JSON настройки
     is_active = Column(Boolean, default=True)
     strategy = Column(String, default="simple_cut")
+    publishers = Column(JSON, default="youtube_shorts")

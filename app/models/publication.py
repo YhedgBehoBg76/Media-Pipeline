@@ -1,3 +1,5 @@
+from email.policy import default
+
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum, Index
 from sqlalchemy.sql import func
 from app.core.database import Base
@@ -21,6 +23,7 @@ class Publication(Base):
     external_url = Column(String, nullable=True)
     error_message = Column(String, nullable=True)
     retry_count = Column(Integer, default=0)
+    max_retries = Column(Integer, default=5)
     published_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 

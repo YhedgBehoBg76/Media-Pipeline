@@ -5,9 +5,11 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
+from app.models.publication import Publication, PublicationStatus
 from app.worker.tasks import process_media_pipeline
 from app.core.database import get_db
-from app.models.media import MediaItem, Status
+from app.models.media import MediaItem, MediaStatus
 from app.models.sources import Source
 from app.modules.sources.adapter_factory import SourceAdapterFactory
 from app.schemas.media import ScanResponse, MediaItemResponse
@@ -72,7 +74,7 @@ def scan_source(source_id: int, db: Session = Depends(get_db)):
             external_id=video['external_id'],
             source_id=source.id,
             original_url=video['url'],
-            status=Status.PENDING,
+            status=MediaStatus.PENDING,
             used_strategy=source.strategy,
             video_metadata=video["metadata"]
         )
@@ -81,9 +83,19 @@ def scan_source(source_id: int, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(media_item)
 
-        process_media_pipeline.delay(media_item.id)
+        for platform in source.publishers:
+            publication = Publication(
+                media_id=media_item.id,
+                platform=platform,
+                status=PublicationStatus.PENDING
+            )
+            db.add(publication)
+
+        db.commit()
 
         created_items.append(media_item)
+        process_media_pipeline.delay(media_item.id)
+
 
     return {
         "source_id": source_id,
@@ -102,7 +114,8 @@ def create_source(source: SourceCreate, db: Session = Depends(get_db)):
         type=source.type,
         config=config_json,
         strategy=source.strategy,
-        is_active=source.is_active
+        is_active=source.is_active,
+        publishers=source.publishers
     )
 
     db.add(db_source)

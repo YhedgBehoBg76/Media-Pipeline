@@ -1,5 +1,14 @@
-
+from typing import Dict, Any, Optional
 from abc import ABC, abstractmethod
+from pydantic import BaseModel
+
+
+class UploadResult(BaseModel):
+    success: bool
+    url: str
+    external_id: str
+    platform: str
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class UploaderAdapter(ABC):

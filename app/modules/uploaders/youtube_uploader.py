@@ -1,10 +1,15 @@
 # app/modules/uploaders/youtube_uploader.py
 import os
+from importlib.metadata import metadata
+
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from app.modules.uploaders.base import UploaderAdapter
+from app.modules.uploaders.base import UploadResult
 from app.modules.uploaders.youtube_auth import get_authenticated_client
+
 import logging
+
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +22,7 @@ class YouTubeUploader(UploaderAdapter):
     def name(self) -> str:
         return "youtube_shorts"
 
-    def upload(self, file_path: str, params: dict) -> str:
+    def upload(self, file_path: str, params: dict) -> UploadResult:
         token_path = os.getenv("GOOGLE_TOKEN_PATH", "/app/secrets/token.pickle")
 
         youtube = get_authenticated_client(token_path)
@@ -43,7 +48,22 @@ class YouTubeUploader(UploaderAdapter):
             if status:
                 logger.info(f"Uploaded {int(status.progress() * 100)}%")
 
+        if not response:
+            raise ValueError("[YoutubeUploader] response is None")
+
         video_id = response['id']
         url = f"https://youtube.com/shorts/{video_id}"
         logger.info(f"Published: {url}")
-        return url
+
+        result = UploadResult(
+            success=True,
+            url=url,
+            external_id=response['id'] if response else None,
+            platform="youtube_shorts",
+            metadata=response
+        )
+
+        if not result:
+            raise ValueError("[YoutubeUploader] UploadResult is None")
+
+        return result

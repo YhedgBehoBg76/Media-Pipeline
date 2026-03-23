@@ -87,6 +87,18 @@ services:
       - queue
       - storage
 
+  beat:
+    build: .
+    command: celery -A app.worker.tasks beat --loglevel=info
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - RABBITMQ_URL=${RABBITMQ_URL}
+    depends_on:
+      - db
+      - queue
+
 volumes:
   postgres_data:
   minio_data:

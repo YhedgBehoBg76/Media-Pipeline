@@ -1,37 +1,39 @@
-
 from celery import Celery, chain
+from celery.schedules import crontab
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.models.media import MediaItem, Status
+from app.models.media import MediaItem, MediaStatus
 from app.models.sources import Source
+from app.models.publication import Publication, PublicationStatus
 
 from app.modules.downloaders.factory import DownloaderFactory
 from app.modules.processors.factory import ProcessorFactory
 from app.modules.uploaders.factory import UploaderFactory
+
+from typing import Optional, Dict, Any
+from sqlalchemy.sql import func
+from sqlalchemy import update
+from datetime import datetime, timezone
 
 import json
 import os
 import logging
 import boto3
 
-# ← Инициализация Celery
+
 celery_app = Celery('worker', broker=settings.RABBITMQ_URL)
 
-# ← Исправлено: __name__ вместо name
 logger = logging.getLogger(__name__)
 
-
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
-
-DEFAULT_UPLOADER = "youtube_shorts"
 
 def get_db_session():
     """Создаёт новую сессию БД (локально для каждой задачи)"""
     return SessionLocal()
 
 
-def update_status(media_id: int, status: Status):
+def update_status(media_id: int, status: MediaStatus):
     """Обновляет статус MediaItem в БД"""
     db = get_db_session()
     try:
@@ -42,6 +44,57 @@ def update_status(media_id: int, status: Status):
             logger.info(f"Media {media_id}: status = {status.value}")
     finally:
         db.close()
+
+
+def calculate_aggregated_status(publications: list[Publication]) -> MediaStatus:
+    """Определяет агрегированный статус по списку публикаций"""
+    if not publications:
+        return MediaStatus.PROCESSED
+
+    statuses = [pub.status for pub in publications]
+
+    # ← Чёткие правила в порядке приоритета
+    if all(s == PublicationStatus.FAILED for s in statuses):
+        return MediaStatus.FAILED
+
+    if all(s == PublicationStatus.PUBLISHED for s in statuses):
+        return MediaStatus.PUBLISHED
+
+    if any(s == PublicationStatus.PUBLISHED for s in statuses) and \
+            any(s in [PublicationStatus.FAILED, PublicationStatus.PENDING] for s in statuses):
+        return MediaStatus.PARTIALLY_PUBLISHED
+
+    if any(s in [PublicationStatus.PENDING, PublicationStatus.PUBLISHING] for s in statuses):
+        return MediaStatus.PUBLISHING
+
+    return MediaStatus.PROCESSED
+
+
+def update_aggregated_media_status(db, media_id: int) -> bool:
+    """Обновляет статус, используя вычисленную логику"""
+    publications = db.query(Publication).filter(
+        Publication.media_id == media_id
+    ).all()
+
+    if not publications:
+        return False
+
+    new_status = calculate_aggregated_status(publications)
+
+    result = db.execute(
+        update(MediaItem)
+        .where(
+            MediaItem.id == media_id,
+            MediaItem.status != new_status
+        )
+        .values(
+            status=new_status,
+            updated_at=func.now()
+        )
+    )
+
+    db.commit()
+    return result.rowcount > 0
 
 
 def get_source(media_id: int):
@@ -106,7 +159,7 @@ def download_from_s3(s3_path: str, local_path: str) -> str:
 
 @celery_app.task(bind=True, max_retries=3)
 def download_video_task(self, media_id: int):
-    """Задача 1: Скачивание видео"""
+    """Скачивание видео"""
     local_path = None
     db = get_db_session()
 
@@ -120,21 +173,21 @@ def download_video_task(self, media_id: int):
             raise Exception(f"Source not found for media {media_id}")
 
         # Обновляем статус
-        update_status(media_id, Status.DOWNLOADING)
+        update_status(media_id, MediaStatus.DOWNLOADING)
 
         # Скачиваем
         downloader = DownloaderFactory.get_downloader(source.type)
         local_path = downloader.download(media)
         logger.info(f"Downloaded to: {local_path}")
 
-        update_status(media_id, Status.DOWNLOADED)
+        update_status(media_id, MediaStatus.DOWNLOADED)
 
         # ← Возвращаем путь для следующей задачи (через chain)
         return {"media_id": media_id, "local_path": local_path}
 
     except Exception as e:
         logger.error(f"Download failed: {str(e)}")
-        update_status(media_id, Status.FAILED)
+        update_status(media_id, MediaStatus.FAILED)
         raise self.retry(exc=e, countdown=60)
 
     finally:
@@ -143,7 +196,7 @@ def download_video_task(self, media_id: int):
 
 @celery_app.task(bind=True, max_retries=3)
 def process_video_task(self, task_result: dict):
-    """Задача 2: Обработка видео"""
+    """Обработка видео"""
     media_id = task_result["media_id"]
     local_path = task_result["local_path"]
     processed_path = None
@@ -161,7 +214,7 @@ def process_video_task(self, task_result: dict):
         except (json.JSONDecodeError, TypeError):
             strategy_config = source.strategy
 
-        update_status(media_id, Status.PROCESSING)
+        update_status(media_id, MediaStatus.PROCESSING)
 
         processor = ProcessorFactory.get_processor(strategy_config)
         processed_path = f"/tmp/media/{media_id}_processed.mp4"
@@ -169,13 +222,13 @@ def process_video_task(self, task_result: dict):
         processor.process(local_path, processed_path, params={"duration": 55})
         logger.info(f"Processed to: {processed_path}")
 
-        update_status(media_id, Status.PROCESSED)
+        update_status(media_id, MediaStatus.PROCESSED)
 
         return {"media_id": media_id, "processed_path": processed_path}
 
     except Exception as e:
         logger.error(f"Processing failed: {str(e)}")
-        update_status(media_id, Status.FAILED)
+        update_status(media_id, MediaStatus.FAILED)
         raise self.retry(exc=e, countdown=60)
 
     finally:
@@ -186,12 +239,12 @@ def process_video_task(self, task_result: dict):
 
 @celery_app.task(bind=True, max_retries=3)
 def upload_video_task(self, task_result: dict):
-    """Задача 3: Загрузка в S3"""
+    """Загрузка в S3"""
     media_id = task_result["media_id"]
     processed_path = task_result["processed_path"]
 
     try:
-        update_status(media_id, Status.UPLOADING)
+        update_status(media_id, MediaStatus.UPLOADING)
 
         uploader = UploaderFactory.get_uploader("s3")
         s3_path = uploader.upload(processed_path, params={"prefix": "processed"})
@@ -202,7 +255,7 @@ def upload_video_task(self, task_result: dict):
             media = db.query(MediaItem).filter(MediaItem.id == media_id).first()
             if media:
                 media.s3_path = s3_path
-                media.status = Status.PUBLISHED
+                media.status = MediaStatus.UPLOADED
                 db.commit()
         finally:
             db.close()
@@ -211,7 +264,7 @@ def upload_video_task(self, task_result: dict):
 
     except Exception as e:
         logger.error(f"Upload failed: {str(e)}")
-        update_status(media_id, Status.FAILED)
+        update_status(media_id, MediaStatus.FAILED)
         raise self.retry(exc=e, countdown=60)
 
     finally:
@@ -219,62 +272,234 @@ def upload_video_task(self, task_result: dict):
             os.remove(processed_path)
 
 
-@celery_app.task(bind=True, max_retries=3)
-def publish_video_task(self, task_result: dict):
-    """Задача 4: Публикация на YouTube"""
+@celery_app.task(bind=True, max_retries=5, autoretry_for=(Exception,))
+def publish_to_platform(self, publication_id: int) -> Dict[str, Any]:
+    """
+    Args:
+        publication_id: ID записи в таблице publications
 
-    if not os.getenv("YOUTUBE_PUBLISH_ENABLED", "false").lower() == "true":
-        logger.warning(f"Skipping publish for media {task_result['media_id']} (disabled)")
-        return {"media_id": task_result['media_id'], "url": "mock://published"}
-
-    media_id = task_result["media_id"]
-    s3_path = task_result.get("s3_path")
+    Returns:
+        Dict с результатом публикации
+    """
     db = get_db_session()
-    temp_path = f"/tmp/media/{media_id}_for_upload.mp4"
+    temp_path: Optional[str] = None
+    publication = None
 
     try:
-        if not s3_path:
-            logger.error(f"Media {media_id}: s3_path is None in task_result: {task_result}")
-            update_status(media_id, Status.FAILED)
-            raise Exception("s3_path is None - upload task may have failed")
+        publication = db.query(Publication).filter(
+            Publication.id == publication_id
+        ).first()
 
-        update_status(media_id, Status.PUBLISHING)
+        if not publication:
+            logger.error(f"[tasks.publish_to_platform] Publication {publication_id} not found")
+            return {
+                "publication_id": publication_id,
+                "status": "failed",
+                "error": "Publication not found"
+            }
 
-        media = db.query(MediaItem).filter(MediaItem.id == media_id).first()
-        source = db.query(Source).filter(Source.id == media.source_id).first()
+        if publication.status == PublicationStatus.PUBLISHED:
+            logger.warning(f"Publication {publication_id} already published, skipping")
+            return {
+                "publication_id": publication_id,
+                "status": "skipped",
+                "reason": "already_published"
+            }
 
-        download_from_s3(s3_path, temp_path)
+        media = db.query(MediaItem).filter(
+            MediaItem.id == publication.media_id
+        ).first()
 
-        metadata = media.video_metadata or {}
+        if not media:
+            raise Exception(f"MediaItem {publication.media_id} not found")
 
-        uploader = UploaderFactory.get_uploader(DEFAULT_UPLOADER)
-        url = uploader.upload(
+        # Проверяем готовность видео
+        if media.status not in [MediaStatus.UPLOADED, MediaStatus.PUBLISHING, MediaStatus.PARTIALLY_PUBLISHED]:
+            raise Exception(f"Media {publication.media_id} not ready (status={media.status.value})")
+
+        if not media.s3_path:
+            raise Exception(f"Media {publication.media_id}: s3_path is None")
+
+        # ← Обновляем статус ТОЛЬКО этой публикации
+        publication.status = PublicationStatus.PUBLISHING
+        publication.retry_count += 1
+        publication.error_message = None
+        db.commit()
+
+        logger.info(f"Publication {publication_id}: publishing to {publication.platform}")
+
+        # Скачиваем из S3 во временный файл
+        temp_path = f"/tmp/media/{media.id}_{publication.platform}.mp4"
+        download_from_s3(media.s3_path, temp_path)
+
+        metadata = {}
+        if media.video_metadata:
+            try:
+                metadata = media.video_metadata
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning(f"[publish_to_platform] metadata JSON error: {e}")
+
+        uploader = UploaderFactory.get_uploader(publication.platform)
+
+        upload_result = uploader.upload(
             temp_path,
             params={
                 "title": metadata.get("title"),
                 "description": metadata.get("description"),
                 "tags": metadata.get("tags", []),
-                "media_id": media_id
+                "media_id": media.id
             }
         )
 
-        logger.info(f"Published to: {url}")
-
-        media.status = Status.PUBLISHED
+        publication.status = PublicationStatus.PUBLISHED
+        publication.external_url = upload_result.url
+        publication.external_id = upload_result.external_id
+        publication.published_at = func.now()
+        publication.error_message = None
         db.commit()
 
-        return {"media_id": media_id, "url": url}
+        update_aggregated_media_status(db, media.id)
+
+        logger.info(f"Publication {publication_id}: published to {publication.platform} at {upload_result.url}")
+
+        return {
+            "publication_id": publication_id,
+            "media_id": media.id,
+            "platform": publication.platform,
+            "status": "published",
+            "url": upload_result.url
+        }
 
     except Exception as e:
-        logger.error(f"Publishing failed: {str(e)}")
-        update_status(media_id, Status.FAILED)
-        raise self.retry(exc=e, countdown=60)
+        error_msg = str(e)
+        logger.error(
+            f"Publication {publication_id}: failed - {error_msg}. "
+        )
+
+        if db:
+            publication.status = PublicationStatus.FAILED
+            publication.error_message = error_msg
+            db.commit()
+
+            update_aggregated_media_status(db, publication.media_id)
+
+        if publication.retry_count < publication.max_retries:
+            countdown = 300 * publication.retry_count  # Экспоненциальная задержка
+            raise self.retry(exc=e, countdown=countdown)
+        else:
+            logger.error(f"Publication {publication_id}: max retries reached")
+            return {
+                "publication_id": publication_id,
+                "status": "failed",
+                "error": error_msg
+            }
 
     finally:
-        db.close()
+        if db:
+            db.close()
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
 
+
+@celery_app.task
+def publish_scheduler() -> Dict[str, int]:
+    """
+    Запускается Celery Beat каждые 30 минут.
+    Проверяет лимиты по платформам и отправляет публикации в очередь.
+
+    Returns:
+        Dict с количеством отправленных публикаций по платформам
+    """
+    db = get_db_session()
+
+    quotas = {
+        "youtube_shorts": int(os.getenv("YOUTUBE_DAILY_LIMIT", "6"))
+    }
+
+    result = {}
+
+    try:
+        today = datetime.now(timezone.utc).date()
+
+        for platform, limit in quotas.items():
+            published_today = db.query(Publication).filter(
+                Publication.platform == platform,
+                Publication.status == PublicationStatus.PUBLISHED,
+                func.date(Publication.published_at) == today  # ← func.date() преобразует на стороне БД
+            ).count()
+
+            remaining = limit - published_today
+
+            if remaining <= 0:
+                logger.info(f"Quota reached for {platform}: {published_today}/{limit}")
+                result[platform] = 0
+                continue
+
+            pending = db.query(Publication).join(
+                MediaItem, Publication.media_id == MediaItem.id
+            ).filter(
+                Publication.platform == platform,
+                Publication.status == PublicationStatus.PENDING,
+                # ← Только готовые MediaItem
+                MediaItem.status.in_([
+                    MediaStatus.UPLOADED,
+                    MediaStatus.PUBLISHING,
+                    MediaStatus.PARTIALLY_PUBLISHED
+                ])
+            ).order_by(Publication.created_at).limit(remaining).all()
+
+            for pub in pending:
+                publish_to_platform.delay(pub.id)
+                logger.info(f"Queued publication {pub.id} for {platform}")
+
+            result[platform] = len(pending)
+
+        logger.info(f"Scheduler completed: {result}")
+        return result
+
+    except Exception as e:
+        logger.error(f"Scheduler failed: {str(e)}")
+        raise
+
+    finally:
+        db.close()
+
+
+@celery_app.task
+def retry_failed_publications(max_retries: int = 3) -> int:
+    """
+    Находит FAILED публикации и отправляет на retry.
+    Можно запускать вручную или по расписанию.
+
+    Args:
+        max_retries: Максимальное количество попыток
+
+    Returns:
+        Количество отправленных на retry
+    """
+    db = get_db_session()
+    count = 0
+
+    try:
+        failed = db.query(Publication).filter(
+            Publication.status == PublicationStatus.FAILED,
+            Publication.retry_count < max_retries
+        ).all()
+
+        for pub in failed:
+            pub.status = PublicationStatus.PENDING
+            pub.error_message = None
+            db.commit()
+
+            publish_to_platform.delay(pub.id)
+            count += 1
+            logger.info(f"Retrying publication {pub.id} for {pub.platform}")
+
+        logger.info(f"Retry task: queued {count} failed publications")
+        return count
+
+    finally:
+        db.close()
 
 # ========== ГЛАВНАЯ ЗАДАЧА ==========
 
@@ -290,4 +515,24 @@ def process_media_pipeline(media_id: int):
         upload_video_task.s(),
     )
 
-    return workflow.apply_async()
+    result = workflow.apply_async()
+
+    logger.info(f"Media {media_id}: processing pipeline started, task_id={result.id}")
+
+    return {
+        "media_id": media_id,
+        "task_id": result.id,
+        "status": "processing"
+    }
+
+
+celery_app.conf.beat_schedule = {
+    "publish-scheduler": {
+        "task": "app.worker.tasks.publish_scheduler",
+        "schedule": crontab(minute="*/2"),  # Каждые 30 минут
+    },
+    "retry-failed-publications": {
+        "task": "app.worker.tasks.retry_failed_publications",
+        "schedule": crontab(minute=0, hour="*/2"),  # Каждые 2 часа
+    },
+}
