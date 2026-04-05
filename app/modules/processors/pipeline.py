@@ -75,7 +75,7 @@ class ProcessingPipeline(ProcessingStrategy):
             self._cleanup_temp_files(temp_files)
 
     @staticmethod
-    def _cleanup_temp_files(self, temp_files: List[str]):
+    def _cleanup_temp_files(temp_files: List[str]):
         for file_path in temp_files:
             try:
                 if os.path.exists(file_path):
