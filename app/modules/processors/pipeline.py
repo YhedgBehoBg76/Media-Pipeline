@@ -76,6 +76,7 @@ class ProcessingPipeline(ProcessingStrategy):
 
     @staticmethod
     def _cleanup_temp_files(temp_files: List[str]):
+        """удаляет временные файлы"""
         for file_path in temp_files:
             try:
                 if os.path.exists(file_path):
