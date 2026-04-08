@@ -529,7 +529,7 @@ def process_media_pipeline(media_id: int):
 celery_app.conf.beat_schedule = {
     "publish-scheduler": {
         "task": "app.worker.tasks.publish_scheduler",
-        "schedule": crontab(minute="*/2"),  # Каждые 30 минут
+        "schedule": crontab(minute="*/2"),  # Каждые 2 минуты
     },
     "retry-failed-publications": {
         "task": "app.worker.tasks.retry_failed_publications",

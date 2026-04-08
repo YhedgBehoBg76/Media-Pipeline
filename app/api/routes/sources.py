@@ -5,6 +5,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from celery import chain
 
 from app.models.publication import Publication, PublicationStatus
 from app.worker.tasks import process_media_pipeline
@@ -14,6 +15,7 @@ from app.models.sources import Source
 from app.modules.sources.adapter_factory import SourceAdapterFactory
 from app.schemas.media import ScanResponse, MediaItemResponse
 from app.schemas.source import SourceResponse, SourceCreate
+from app.worker.orchestrator_tasks import ingest_raw_video_task, run_media_orchestrator
 
 
 router = APIRouter()
@@ -83,18 +85,16 @@ def scan_source(source_id: int, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(media_item)
 
-        for platform in source.publishers:
-            publication = Publication(
-                media_id=media_item.id,
-                platform=platform,
-                status=PublicationStatus.PENDING
-            )
-            db.add(publication)
-
-        db.commit()
-
         created_items.append(media_item)
-        process_media_pipeline.delay(media_item.id)
+
+        workflow = chain(
+            ingest_raw_video_task.s(media_item.id),
+            run_media_orchestrator.s(
+                platforms=source.publishers,
+                metadata=video.get("metadata", {})
+            )
+        )
+        workflow.apply_async()
 
 
     return {

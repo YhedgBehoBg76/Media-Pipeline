@@ -9,5 +9,5 @@ class Source(Base):
     type = Column(String, nullable=False)  # youtube, filesystem, etc.
     config = Column(JSONString, nullable=True)  # JSON настройки
     is_active = Column(Boolean, default=True)
-    strategy = Column(String, default="simple_cut")
+    strategy = Column(JSON, default="simple_cut")
     publishers = Column(JSON, default="youtube_shorts")
