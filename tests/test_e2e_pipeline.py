@@ -72,7 +72,6 @@ def mock_dependencies(test_dir, db):
     with \
         patch.object(MediaProcessingOrchestrator, "_load_config", return_value=TEST_CONFIG), \
         patch("app.worker.tasks.SessionLocal", return_value=db), \
-        patch("app.services.media_orchestrator.SessionLocal", return_value=db), \
         patch("app.worker.tasks.DownloaderFactory.get_downloader") as mock_downloader, \
         patch("app.worker.tasks.UploaderFactory.get_uploader") as mock_uploader, \
         patch("app.services.media_orchestrator.ProcessorFactory.get_processor") as mock_processor, \

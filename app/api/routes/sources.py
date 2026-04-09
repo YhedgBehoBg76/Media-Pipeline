@@ -15,7 +15,7 @@ from app.models.sources import Source
 from app.modules.sources.adapter_factory import SourceAdapterFactory
 from app.schemas.media import ScanResponse, MediaItemResponse
 from app.schemas.source import SourceResponse, SourceCreate
-from app.worker.orchestrator_tasks import ingest_raw_video_task, run_media_orchestrator
+from app.worker.tasks import ingest_raw_video_task, run_media_orchestrator
 
 
 router = APIRouter()
