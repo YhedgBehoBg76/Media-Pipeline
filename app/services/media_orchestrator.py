@@ -94,6 +94,7 @@ class MediaProcessingOrchestrator:
             self._check_disk_space(task_dir, source_path)
 
             seg_params = self._prepare_segmenter_params(constraints, segmenter_params)
+            seg_params["output_dir"] = str(task_dir)
 
             #расчет квот и ограничение количества создаваемых сегментов
             if db_session and target_platforms:

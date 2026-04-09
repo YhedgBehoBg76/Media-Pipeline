@@ -33,9 +33,8 @@ def _save_publications(db, media_id: int, report: Dict[str, Any]) -> None:
             platform=platform,
             status=PublicationStatus.PUBLISHED if plat_report["status"] == "success" else PublicationStatus.FAILED,
             external_url=first_res.get("url"),
-            external_id=first_res.get("external_id"),
-            published_at=func.now() if plat_report["status"] == "success" else None,
             error_message=next((r.get("error") for r in results if r.get("error")), None),
+            published_at=func.now() if plat_report["status"] == "success" else None,
             retry_count=0
         )
         db.add(pub)
