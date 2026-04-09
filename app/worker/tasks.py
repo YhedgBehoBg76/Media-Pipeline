@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from celery import Celery, chain
+from celery.schedules import crontab
 from sqlalchemy import func
 
 from app.core.config import settings
@@ -236,3 +237,11 @@ def media_processing_scheduler() -> dict:
         raise
     finally:
         db.close()
+
+
+celery_app.conf.beat_schedule = {
+    "process-pending-media": {
+        "task": "app.worker.tasks.media_processing_scheduler",
+        "schedule": crontab(minute="*/5"),  # Каждые 5 минут
+    },
+}

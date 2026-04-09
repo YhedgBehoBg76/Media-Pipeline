@@ -1,22 +1,16 @@
 
 import json
-from importlib.metadata import metadata
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from celery import chain
 
-from app.models.publication import Publication, PublicationStatus
-from app.worker.tasks import process_media_pipeline
 from app.core.database import get_db
 from app.models.media import MediaItem, MediaStatus
 from app.models.sources import Source
 from app.modules.sources.adapter_factory import SourceAdapterFactory
 from app.schemas.media import ScanResponse, MediaItemResponse
 from app.schemas.source import SourceResponse, SourceCreate
-from app.worker.tasks import ingest_raw_video_task, run_media_orchestrator
-
 
 router = APIRouter()
 
@@ -86,16 +80,6 @@ def scan_source(source_id: int, db: Session = Depends(get_db)):
         db.refresh(media_item)
 
         created_items.append(media_item)
-
-        # workflow = chain(
-        #     ingest_raw_video_task.s(media_item.id),
-        #     run_media_orchestrator.s(
-        #         platforms=source.publishers,
-        #         metadata=video.get("metadata", {})
-        #     )
-        # )
-        # workflow.apply_async()
-
 
     return {
         "source_id": source_id,

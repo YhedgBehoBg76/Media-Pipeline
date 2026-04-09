@@ -1,10 +1,10 @@
 youtube_shorts:
   constraints:
-    max_duration: 60
+    max_duration: 55
     aspect_ratio: "9:16"
     max_file_size_mb: 512
   quotas:
-    daily_limit: 5
+    daily_limit: 2
   upload_defaults:
     privacy: "private"
     category_id: "22"
