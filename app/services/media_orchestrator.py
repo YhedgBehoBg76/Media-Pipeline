@@ -6,12 +6,17 @@
 import os
 import shutil
 import logging
+from datetime import datetime, timezone
+
 import yaml
 import boto3
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
+from sqlalchemy import func
 
+from app.models.publication import Publication, PublicationStatus
+from app.core.config import settings
 from app.modules.processors.factory import ProcessorFactory
 from app.modules.processors.segmenter import FixedDurationSegmenter
 from app.modules.uploaders.factory import UploaderFactory
@@ -54,7 +59,8 @@ class MediaProcessingOrchestrator:
             pipeline_steps: List[str],
             pipeline_params: Dict[str, Any],
             upload_params: Dict[str, Any],
-            segmenter_params: Optional[Dict[str, Any]] = None
+            segmenter_params: Optional[Dict[str, Any]] = None,
+            db_session: Optional[Any] = None
     ) -> Dict[str, Any]:
         """
         Полный цикл обработки и публикации.
@@ -81,14 +87,26 @@ class MediaProcessingOrchestrator:
             self._validate_platforms(target_platforms)
 
             task_dir.mkdir(parents=True, exist_ok=True)
-
             self._download_from_s3(source_s3_key, str(source_path))
 
             constraints = self._resolve_constraints(target_platforms)
 
             self._check_disk_space(task_dir, source_path)
 
-            seg_params = self._prepare_segmenter_params(pipeline_params, constraints, segmenter_params)
+            seg_params = self._prepare_segmenter_params(constraints, segmenter_params)
+
+            #расчет квот и ограничение количества создаваемых сегментов
+            if db_session and target_platforms:
+                quotas = [self._get_remaining_quota(db_session, p) for p in target_platforms]
+                min_quota = min(quotas) if quotas else float("inf")
+
+                if min_quota <= 0:
+                    logger.warning("⚠️ Quota exceeded for all platforms. Skipping task %s", task_id)
+                    report.status = "skipped_quota"
+                    report.platforms = {p: {"status": "skipped", "reason": "daily_quota_exceeded"} for p in target_platforms}
+                    return asdict(report)
+
+                seg_params["max_segments"] = min_quota if isinstance(min_quota, int) else None
 
             segments = self.segmenter.split(str(source_path), seg_params)
 
@@ -136,50 +154,12 @@ class MediaProcessingOrchestrator:
 
         return asdict(report)
 
-    @staticmethod
-    def _resolve_config_path(explicit_path: Optional[str]) -> Path:
-        """Ищет platforms.yaml в нескольких локациях (local, docker, packaged)."""
-        if explicit_path:
-            path = Path(explicit_path)
-            if not path.is_file():
-                raise FileNotFoundError(f"Config not found at explicit path: {path}")
-            return path
-
-        candidates = [
-            Path("platforms.yaml"),
-            Path(__file__).resolve().parents[2] / "platforms.yaml",
-            Path("/app/platforms.yaml")
-        ]
-
-        for p in candidates:
-            if p.is_file():
-                return p
-        raise FileNotFoundError("platforms.yaml not found. Provide config_path or place it in project root.")
-
     def _load_config(self) -> dict:
         with open(self.config_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
         if not isinstance(data, dict):
             raise ValueError("platforms.yaml must contain a valid YAML mapping")
         return data
-
-    def _init_s3_client(self) -> boto3.client:
-        """Инициализирует S3-клиент с валидацией обязательных переменных."""
-        endpoint = os.getenv("S3_ENDPOINT")
-        bucket = os.getenv("S3_BUCKET")
-
-        if not endpoint:
-            logger.warning("S3_ENDPOINT not set. Using boto3 defaults (AWS).")
-        if not bucket:
-            raise ValueError("S3 bucket is None (Orchestrator._init_s3_client)")
-
-        return boto3.client(
-            "s3",
-            endpoint_url=endpoint,
-            aws_access_key_id=os.getenv("S3_ACCESS_KEY"),
-            aws_secret_access_key=os.getenv("S3_SECRET_KEY"),
-            region_name=os.getenv("S3_REGION", "us-east-1")
-        )
 
     def _download_from_s3(self, s3_key: str, dest_path: str) -> None:
         bucket = os.getenv("S3_BUCKET", "media-storage")
@@ -210,6 +190,68 @@ class MediaProcessingOrchestrator:
 
         return {"max_duration": max_duration, "aspect_ratio": aspect_ratio}
 
+    def _build_upload_params(self, platform: str, base_metadata: dict) -> dict:
+        """Собирает upload_params для конкретной платформы: дефолты + метаданные + валидация."""
+        defaults = self.config.get(platform, {}).get("upload_defaults", {})
+        merged = {**defaults, **base_metadata}
+
+        # Пример базовой валидации/адаптации (можно расширить)
+        merged["title"] = (merged.get("title") or "Short")[:100]
+        merged["description"] = (merged.get("description") or "")[:5000]
+        merged.setdefault("tags", [])
+        merged.setdefault("platform", platform)
+
+        return merged
+
+    def _check_platform_quota(self, db, platform: str) -> bool:
+        """
+        Проверяет дневной лимит публикаций
+        """
+        limit = self.config.get(platform, {}).get("quotas", {}).get("daily_limit")
+        if limit is None:
+            return True
+
+        today = datetime.now(timezone.utc)
+
+        published_count = db.query(Publication).filter(
+            Publication.platform == platform,
+            Publication.status == PublicationStatus.PUBLISHED,
+            func.date(Publication.published_at) == today
+        ).count()
+
+        return published_count < limit
+
+    def _get_remaining_quota(self, db, platform: str) -> int | float:
+        limit = self.config.get(platform, {}).get("quotas", {}).get("daily_limit")
+        if limit is None: return float("inf")
+        today = datetime.now(timezone.utc).date()
+        published = db.query(Publication).filter(
+            Publication.platform == platform,
+            Publication.status == PublicationStatus.PUBLISHED,
+            func.date(Publication.published_at) == today
+        ).count()
+        return max(0, limit - published)
+
+    @staticmethod
+    def _init_s3_client() -> boto3.client:
+        """Инициализирует S3-клиент с валидацией обязательных переменных."""
+        endpoint = os.getenv("S3_ENDPOINT")
+        bucket = os.getenv("S3_BUCKET")
+
+        if not endpoint:
+            logger.warning("S3_ENDPOINT not set. Using boto3 defaults (AWS).")
+        if not bucket:
+            raise ValueError("S3 bucket is None (Orchestrator._init_s3_client)")
+
+        return boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=os.getenv("S3_ACCESS_KEY"),
+            aws_secret_access_key=os.getenv("S3_SECRET_KEY"),
+            region_name=os.getenv("S3_REGION", "us-east-1")
+        )
+
+
     @staticmethod
     def _check_disk_space(task_dir: Path, source_path: Path) -> None:
         required = os.path.getsize(source_path) * 2
@@ -220,26 +262,26 @@ class MediaProcessingOrchestrator:
                 f"Available {free / 1024**3:.1f}GB"
             )
 
+
     @staticmethod
     def _prepare_segmenter_params(
-        pipeline_params: dict, constraints: dict, explicit_params: Optional[dict]
+        constraints: dict, explicit_params: Optional[dict]
     ) -> dict:
-        """Собирает конфиг для сегментатора с приоритетом: explicit > constraints > pipeline > defaults."""
-        base = {
-            "duration": constraints.get("max_duration") or pipeline_params.get("duration", 55),
-            "overlap": pipeline_params.get("overlap", 0),
+        """Собирает конфиг для сегментатора с приоритетом: explicit > constraints"""
+        return {
+            "duration": constraints.get("max_duration") or explicit_params.get("duration", 55),
+            "overlap": explicit_params.get("overlap", 0),
             "output_dir": "/tmp/media",  # переопределяется в split(), но оставляем для ясности
-            "min_chunk": pipeline_params.get("min_chunk", 5),
-            "max_segments": pipeline_params.get("max_segments"),
+            "min_chunk": explicit_params.get("min_chunk", 5),
+            "max_segments": explicit_params.get("max_segments"),
         }
-        if explicit_params:
-            base.update(explicit_params)
-        return base
+
 
     @staticmethod
     def _cleanup(task_dir: Path) -> None:
         if task_dir.exists():
             shutil.rmtree(task_dir, ignore_errors=True)
+
 
     @staticmethod
     def _normalize_result(platform: str, raw_result: Any) -> Dict[str, Any]:
@@ -259,15 +301,23 @@ class MediaProcessingOrchestrator:
             "metadata": {}
         }
 
-    def _build_upload_params(self, platform: str, base_metadata: dict) -> dict:
-        """Собирает upload_params для конкретной платформы: дефолты + метаданные + валидация."""
-        defaults = self.config.get(platform, {}).get("upload_defaults", {})
-        merged = {**defaults, **base_metadata}
 
-        # Пример базовой валидации/адаптации (можно расширить)
-        merged["title"] = (merged.get("title") or "Short")[:100]
-        merged["description"] = (merged.get("description") or "")[:5000]
-        merged.setdefault("tags", [])
-        merged.setdefault("platform", platform)
+    @staticmethod
+    def _resolve_config_path(explicit_path: Optional[str]) -> Path:
+        """Ищет platforms.yaml в нескольких локациях (local, docker, packaged)."""
+        if explicit_path:
+            path = Path(explicit_path)
+            if not path.is_file():
+                raise FileNotFoundError(f"Config not found at explicit path: {path}")
+            return path
 
-        return merged
+        candidates = [
+            Path("platforms.yaml"),
+            Path(__file__).resolve().parents[2] / "platforms.yaml",
+            Path("/app/platforms.yaml")
+        ]
+
+        for p in candidates:
+            if p.is_file():
+                return p
+        raise FileNotFoundError("platforms.yaml not found. Provide config_path or place it in project root.")

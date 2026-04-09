@@ -1,0 +1,33 @@
+youtube_shorts:
+  constraints:
+    max_duration: 60
+    aspect_ratio: "9:16"
+    max_file_size_mb: 512
+  quotas:
+    daily_limit: 5
+  upload_defaults:
+    privacy: "private"
+    category_id: "22"
+    title_prefix: "Short"
+
+vk_clips:
+  constraints:
+    max_duration: 180
+    aspect_ratio: "9:16"
+    max_file_size_mb: 1024
+  quotas:
+    daily_limit: 30
+  upload_defaults:
+    group_id: null
+    title_prefix: "VK Clip"
+
+s3:
+  constraints:
+    max_duration: null
+    aspect_ratio: null
+    max_file_size_mb: null
+  quotas:
+    daily_limit: null
+  upload_defaults:
+    bucket: null  # берётся из settings.S3_BUCKET
+    prefix: "processed/"

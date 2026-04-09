@@ -3,7 +3,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
-from celery import Celery
+from celery import Celery, chain
 from sqlalchemy import func
 
 from app.core.config import settings
@@ -14,6 +14,7 @@ from app.models.publication import Publication, PublicationStatus
 from app.services.media_orchestrator import MediaProcessingOrchestrator
 from app.modules.downloaders.factory import DownloaderFactory
 from app.modules.uploaders.factory import UploaderFactory
+from app.worker.tasks import get_db_session
 
 logger = logging.getLogger(__name__)
 celery_app = Celery('orchestrator_worker', broker=settings.RABBITMQ_URL)
@@ -140,7 +141,8 @@ def run_media_orchestrator(
             pipeline_steps=strategy_config,
             pipeline_params=final_pipeline_params,
             upload_params=metadata or {},
-            segmenter_params=final_segmenter_params
+            segmenter_params=final_segmenter_params,
+            db_session=db
         )
 
         # 5. Сохранение результатов публикаций
@@ -167,5 +169,72 @@ def run_media_orchestrator(
             db.query(MediaItem).filter(MediaItem.id == media_id).update({"status": MediaStatus.FAILED})
             db.commit()
         raise self.retry(exc=e, countdown=60)
+    finally:
+        db.close()
+
+@celery_app.task
+def media_processing_scheduler() -> dict:
+    """Забирает PENDING MediaItem, проверяет квоты, запускает chain"""
+    db = get_db_session()
+    try:
+        pending = db.query(MediaItem).filter(
+            MediaItem.status == MediaStatus.PENDING
+        ).limit(10).all()
+
+        if not pending:
+            return {"queued": 0, "skipped_by_quota": 0}
+
+        orchestrator = MediaProcessingOrchestrator()
+        today = datetime.now(timezone.utc).date()
+        remaining_quotas = {}
+
+        for platform, cfg in orchestrator.config.items():
+            limit = cfg.get("quotas", {}).get("daily_limit")
+            if limit is None:
+                remaining_quotas[platform] = float("inf")
+                continue
+
+            published_today = db.query(Publication).filter(
+                Publication.platform == platform,
+                Publication.status == PublicationStatus.PUBLISHED,
+                func.date(Publication.published_at) == today
+            ).count()
+
+            remaining_quotas[platform] = max(0, limit - published_today)
+
+        queued = 0
+        skipped = 0
+
+        for media in pending:
+            source = db.query(Source).filter(Source.id == media.source_id).first()
+            if not source or not source.is_active:
+                continue
+
+            platforms = source.publishers
+
+            available = [p for p in platforms if remaining_quotas.get(p, 0) > 0]
+            if not available:
+                skipped += 1
+                continue
+
+            media.status = MediaStatus.DOWNLOADING
+            db.commit()
+
+            workflow = chain(
+                ingest_raw_video_task.s(media.id),
+                run_media_orchestrator.s(
+                    platforms=available,
+                    upload_meta=media.video_metadata or {}
+                )
+            )
+
+            workflow.apply_async()
+            queued += 1
+
+        return {"queued": queued, "skipped_by_quota": skipped}
+
+    except Exception as e:
+        logger.error("Scheduler failed: %s", e)
+        raise
     finally:
         db.close()

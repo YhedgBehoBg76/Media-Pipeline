@@ -87,14 +87,14 @@ def scan_source(source_id: int, db: Session = Depends(get_db)):
 
         created_items.append(media_item)
 
-        workflow = chain(
-            ingest_raw_video_task.s(media_item.id),
-            run_media_orchestrator.s(
-                platforms=source.publishers,
-                metadata=video.get("metadata", {})
-            )
-        )
-        workflow.apply_async()
+        # workflow = chain(
+        #     ingest_raw_video_task.s(media_item.id),
+        #     run_media_orchestrator.s(
+        #         platforms=source.publishers,
+        #         metadata=video.get("metadata", {})
+        #     )
+        # )
+        # workflow.apply_async()
 
 
     return {
