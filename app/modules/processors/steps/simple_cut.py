@@ -9,18 +9,14 @@ class SimpleCutStep(ProcessingStrategy):
     def name(self) -> str:
         return "simple_cut"
 
-    def process(self, input_path: str, output_path: str, params: dict) -> bool:
+    def process(self, input_path: str, output_path: str, params: dict = None) -> bool:
         """
         Обрезает видео до указанной длительности и кропает в 9:16.
         """
-        duration = params.get("duration", self.DEFAULT_DURATION)
-        start_time = params.get("start_time", 0)
 
         cmd = [
             "ffmpeg",
             "-i", input_path,
-            "-ss", str(start_time),
-            "-t", str(duration),
             "-vf", "crop=ih*(9/16):ih",
             "-c:a", "copy",
             "-y",

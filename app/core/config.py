@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     YOUTUBE_API_KEY: str = ""
     GOOGLE_CREDENTIALS_PATH: str = "/app/secrets/credentials.json"
+    GOOGLE_TOKEN_PATH: str
 
     # === 🔑 КРИТИЧНО: Настройка поведения ===
     model_config = SettingsConfigDict(

@@ -163,7 +163,23 @@ class MediaProcessingOrchestrator:
         return data
 
     def _download_from_s3(self, s3_key: str, dest_path: str) -> None:
+        """Скачивает файл из S3. Автоматически очищает ключ от префиксов."""
         bucket = os.getenv("S3_BUCKET", "media-storage")
+
+        # 1. Очистка ключа от s3://, http://, имени бакета
+        if s3_key.startswith("s3://"):
+            s3_key = s3_key[5:]
+            if "/" in s3_key:
+                bucket, s3_key = s3_key.split("/", 1)
+            else:
+                raise ValueError(f"Invalid s3:// path (missing key): {s3_key}")
+        elif s3_key.startswith(("http://", "https://")):
+            raise ValueError(f"Expected S3 key, got URL: {s3_key}")
+
+        s3_key = s3_key.strip().lstrip("/")
+        if not s3_key:
+            raise ValueError("S3 key is empty after sanitization")
+
         logger.info("⬇️ Downloading s3://%s/%s → %s", bucket, s3_key, dest_path)
         self.s3_client.download_file(bucket, s3_key, dest_path)
 
@@ -236,8 +252,8 @@ class MediaProcessingOrchestrator:
     @staticmethod
     def _init_s3_client() -> boto3.client:
         """Инициализирует S3-клиент с валидацией обязательных переменных."""
-        endpoint = os.getenv("S3_ENDPOINT")
-        bucket = os.getenv("S3_BUCKET")
+        endpoint = settings.S3_ENDPOINT
+        bucket = settings.S3_BUCKET
 
         if not endpoint:
             logger.warning("S3_ENDPOINT not set. Using boto3 defaults (AWS).")
@@ -247,9 +263,9 @@ class MediaProcessingOrchestrator:
         return boto3.client(
             "s3",
             endpoint_url=endpoint,
-            aws_access_key_id=os.getenv("S3_ACCESS_KEY"),
-            aws_secret_access_key=os.getenv("S3_SECRET_KEY"),
-            region_name=os.getenv("S3_REGION", "us-east-1")
+            aws_access_key_id=settings.S3_ACCESS_KEY,
+            aws_secret_access_key=settings.S3_SECRET_KEY,
+            region_name=settings.S3_REGION
         )
 
 

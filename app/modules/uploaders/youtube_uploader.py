@@ -1,12 +1,13 @@
 # app/modules/uploaders/youtube_uploader.py
 import os
-from importlib.metadata import metadata
 
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+
+from app.core.config import settings
 from app.modules.uploaders.base import UploaderAdapter
 from app.modules.uploaders.base import UploadResult
-from app.modules.uploaders.youtube_auth import get_authenticated_client
+from app.modules.uploaders.youtube_auth import get_authenticated_client, YouTubeTokenExpiredError
 
 import logging
 
@@ -23,9 +24,11 @@ class YouTubeUploader(UploaderAdapter):
         return "youtube_shorts"
 
     def upload(self, file_path: str, params: dict) -> UploadResult:
-        token_path = os.getenv("GOOGLE_TOKEN_PATH", "/app/secrets/token.pickle")
-
-        youtube = get_authenticated_client(token_path)
+        try:
+            youtube = get_authenticated_client()
+        except YouTubeTokenExpiredError as e:
+            logger.critical("⚠️ ACTION REQUIRED: %s", e.auth_url)
+            raise
 
         title = params.get("title", f"Shorts {params.get('media_id')}")[:100]
         description = params.get("description", "")[:5000]

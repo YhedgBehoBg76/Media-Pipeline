@@ -8,7 +8,7 @@ from celery.schedules import crontab
 from sqlalchemy import func
 
 from app.core.config import settings
-from app.core.database import SessionLocal
+from app.core.database import Base, engine, SessionLocal
 from app.models.media import MediaItem, MediaStatus
 from app.models.sources import Source
 from app.models.publication import Publication, PublicationStatus
@@ -16,11 +16,13 @@ from app.services.media_orchestrator import MediaProcessingOrchestrator
 from app.modules.downloaders.factory import DownloaderFactory
 from app.modules.uploaders.factory import UploaderFactory
 
+#Base.metadata.create_all(bind=engine)
+
 logger = logging.getLogger(__name__)
 celery_app = Celery('orchestrator_worker', broker=settings.RABBITMQ_URL)
 
 # =========================================================================
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (вынесены для чистоты таска)
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # =========================================================================
 
 def _save_publications(db, media_id: int, report: Dict[str, Any]) -> None:
@@ -69,12 +71,11 @@ def ingest_raw_video_task(self, media_id: int) -> dict:
         downloader = DownloaderFactory.get_downloader(source.type)
         local_path = downloader.download(media)
         if not local_path or not os.path.exists(local_path):
-            raise FileNotFoundError("Downloader returned invalid or missing path")
+            raise FileNotFoundError(f"Downloader returned invalid or missing path: {local_path}")
 
         # 2. Загрузка в S3 как RAW
         s3_uploader = UploaderFactory.get_uploader("s3")
         # Передаём prefix="raw", загрузчик сам сформирует путь.
-        # Если S3Uploader поддерживает явный key, замени на params={"key": f"raw/{source.id}/{media.external_id}.mp4"}
         s3_path = s3_uploader.upload(local_path, params={"prefix": "raw"})
 
         # 3. Обновление БД
@@ -223,7 +224,7 @@ def media_processing_scheduler() -> dict:
                 ingest_raw_video_task.s(media.id),
                 run_media_orchestrator.s(
                     platforms=available,
-                    upload_meta=media.video_metadata or {}
+                    metadata=media.video_metadata or {}
                 )
             )
 
@@ -242,6 +243,6 @@ def media_processing_scheduler() -> dict:
 celery_app.conf.beat_schedule = {
     "process-pending-media": {
         "task": "app.worker.tasks.media_processing_scheduler",
-        "schedule": crontab(minute="*/5"),  # Каждые 5 минут
+        "schedule": crontab(minute="*/1"),  # Каждые 1 минуту
     },
 }
