@@ -12,6 +12,9 @@ class MediaStatus(enum.Enum):
     PENDING = "pending"
     DOWNLOADING = "downloading"
     DOWNLOADED = "downloaded"
+    SEGMENTING = "segmenting"
+    SEGMENTED = "segmented"
+    SOURCE = "source"
     PROCESSING = "processing"
     PROCESSED = "processed"
     UPLOADING = "uploading"
@@ -26,6 +29,7 @@ class MediaItem(Base):
     __tablename__ = "media_items"
 
     id = Column(Integer, primary_key=True, index=True)
+    parent_id = Column(Integer, default=0, index=True)
     external_id = Column(String, index=True)
     source_id = Column(Integer, nullable=False)
     original_url = Column(String, nullable=True)
