@@ -18,7 +18,7 @@ from sqlalchemy import func
 from app.models.publication import Publication, PublicationStatus
 from app.core.config import settings
 from app.modules.processors.factory import ProcessorFactory
-from app.modules.processors.segmenter import FixedDurationSegmenter
+from app.modules.processors.segmenters.fixed_duration_segmenter import FixedDurationSegmenter
 from app.modules.uploaders.factory import UploaderFactory
 from app.modules.uploaders.base import UploadResult
 

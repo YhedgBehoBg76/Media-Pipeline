@@ -1,0 +1,4 @@
+fixed_duration_segmenter:
+  overlap: 0
+  output_dir: "/tmp/media/{media_id}/segments/"
+  min_chunk: 5

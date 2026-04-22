@@ -34,6 +34,7 @@ class MediaItem(Base):
     source_id = Column(Integer, nullable=False)
     original_url = Column(String, nullable=True)
     s3_path = Column(String, nullable=True)
+    local_path = Column(String)
     status = Column(Enum(MediaStatus), default=MediaStatus.PENDING)
     used_strategy = Column(String)
     video_metadata = Column(JSON, nullable=True)

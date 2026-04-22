@@ -22,7 +22,7 @@ class FilesystemDownloader(DownloaderAdapter):
             )
 
         source_path = media_item.original_url
-        dest_path = f"/tmp/media/{media_item.id}{Path(source_path).suffix}"
+        dest_path = f"/tmp/media/{media_item.id}/source_media_id_{media_item.id}{Path(source_path).suffix}"
 
         # Создаём папку если нет
         Path(dest_path).parent.mkdir(parents=True, exist_ok=True)

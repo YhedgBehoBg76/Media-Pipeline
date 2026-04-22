@@ -2,8 +2,11 @@ import os
 import uuid
 import logging
 import subprocess
+
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Any
+
+from app.core.config import settings
 
 
 logger = logging.getLogger(__name__)
@@ -20,15 +23,6 @@ class FixedDurationSegmenter:
         segmenter = FixedDurationSegmenter(default_duration=55, default_overlap=3)
         paths = segmenter.split("input.mp4", {"overlap": 5, "output_dir": "/tmp"})
     """
-
-    def __init__(self, default_duration:int = 55, default_overlap: int = 0):
-        """
-        Args:
-            default_duration: Целевая длительность сегмента (сек). По умолчанию 55.
-            default_overlap: Перекрытие между соседними сегментами (сек). По умолчанию 0.
-        """
-        self.default_duration = default_duration
-        self.default_overlap = default_overlap
 
     def split(self, input_path: str, params: dict[str, Any]):
         """
@@ -57,8 +51,8 @@ class FixedDurationSegmenter:
             FileNotFoundError: Если входной файл не существует.
             RuntimeError: При невозможности создать output_dir или прочитать метаданные.
         """
-        duration = params.get("duration", self.default_duration)
-        overlap = params.get("overlap", self.default_overlap)
+        duration = params.get("duration")
+        overlap = params.get("overlap")
         output_dir = params.get("output_dir", "/tmp/media")
         min_chunk = params.get("min_chunk", 5)
         max_segments = params.get("max_segments")

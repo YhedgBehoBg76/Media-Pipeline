@@ -1,10 +1,9 @@
 import os
-import subprocess
 import pytest
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 from pathlib import Path
 
-from app.modules.processors.segmenter import FixedDurationSegmenter
+from app.modules.processors.segmenters.fixed_duration_segmenter import FixedDurationSegmenter
 
 
 class TestFixedDurationSegmenter:

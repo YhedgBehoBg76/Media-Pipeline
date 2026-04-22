@@ -1,11 +1,10 @@
 from statemachine import StateMachine, State
 from app.models.media import MediaStatus
+import logging
 
+logger = logging.getLogger(__name__)
 
 class MediaStateMachine(StateMachine):
-    def __init__(self, logger):
-        super().__init__()
-        self.logger = logger
 
     pending = State(MediaStatus.PENDING.value, initial=True)
     downloading = State(MediaStatus.DOWNLOADING.value)
@@ -21,23 +20,28 @@ class MediaStateMachine(StateMachine):
     published = State(MediaStatus.PUBLISHED.value)
     failed = State(MediaStatus.FAILED.value)
 
+    fail = (downloading | segmenting | processing | uploading | publishing).to(failed)
+
     start_download = pending.to(downloading)
-    finish_download = start_download.to(downloaded)
+    retry_download = failed.to(downloading)
+    finish_download = (start_download | fail).to(downloaded)
 
     start_segment = downloaded.to(segmenting)
-    finish_segment = start_segment.to(source)
+    retry_segment = failed.to(segmenting)
+    finish_segment = (start_segment | fail).to(source)
 
     start_process = segmented.to(processing)
-    finish_process = start_process.to(processed)
+    retry_process = failed.to(processing)
+    finish_process = (start_process | fail).to(processed)
 
     start_upload = finish_process.to(uploading)
-    finish_upload = start_upload.to(uploaded)
+    retry_upload = failed.to(uploading)
+    finish_upload = (start_upload | fail).to(uploaded)
 
     start_publish = finish_upload.to(publishing)
     retry_publish = failed.to(published)
-    finish_publish = start_publish.to(published)
+    finish_publish = (start_publish | fail).to(published)
 
-    fail = (downloading | segmenting | processing | uploading | publishing).to(failed)
     retry = failed.to(pending)
 
     @downloading.on_enter

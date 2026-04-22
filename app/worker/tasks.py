@@ -8,7 +8,7 @@ from celery.schedules import crontab
 from sqlalchemy import func
 
 from app.core.config import settings
-from app.core.database import Base, engine, SessionLocal
+from app.core.database import SessionLocal
 from app.models.media import MediaItem, MediaStatus
 from app.models.sources import Source
 from app.models.publication import Publication, PublicationStatus
