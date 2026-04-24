@@ -1,199 +1,196 @@
-"""
-Оркестратор обработки и мультиплатформенной публикации видео.
-Координирует: S3 → Валидация → Сегментация → Пайплайн FFmpeg → Загрузка → Очистка.
-"""
-
 import os
 import shutil
 import logging
 from datetime import datetime, timezone
 
 import yaml
-import boto3
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from dataclasses import dataclass, asdict
 from sqlalchemy import func
+from sqlalchemy.orm import attributes
 
+from app.models.media import MediaItem, MediaStatus
 from app.models.publication import Publication, PublicationStatus
 from app.core.config import settings
-from app.modules.processors.factory import ProcessorFactory
-from app.modules.processors.segmenters.fixed_duration_segmenter import FixedDurationSegmenter
-from app.modules.uploaders.factory import UploaderFactory
-from app.modules.uploaders.base import UploadResult
+from app.models.sources import Source
+from app.modules.stateMachines import MediaItemSM
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class TaskReport:
-    """Структурированный отчёт о выполнении задачи."""
-    task_id: str
-    status: str # "success" | "partial_success" | "failed"
-    segments_processed: int
-    platforms: Dict[str, Any]
-    errors: List[str]
+class MediaOrchestrator:
+    NEXT_TRIGGER = {
+        MediaStatus.PENDING: "start_download",
+        MediaStatus.DOWNLOADED: "start_segment",
+        MediaStatus.SOURCE: "",
+        MediaStatus.SEGMENTED: "start_process",
+        MediaStatus.PROCESSED: "start_upload",
+    }
 
-
-class MediaProcessingOrchestrator:
-    """
-    Координирует полный цикл обработки видео для нескольких платформ.
-    Не выполняет обработку сам, а управляет потоком данных, ресурсами и ошибками.
-    """
+    TASKS_PATH = "/tmp/media"
+    # при скачивании - создается папка /tmp/media/item_{item_id}
+    # при сегментации - создается папка /tmp/media/item_{item_id}/segments
 
     def __init__(
             self,
-            config_path: Optional[str] = None,
-            segmenter: Optional[Any] = None
+            download_task,
+            segment_task,
+            process_task,
+            upload_task,
+
+            platfroms_config_path: Optional[str] = settings.PLATFORMS_CONFIG_PATH,
+            segmenter_config_path: Optional[str] = settings.SEGMENTERS_CONFIG_PATH,
+            segmenter_params: Optional[Dict[str, Any]] = {}
     ):
-        self.config_path = self._resolve_config_path(config_path)
-        self.config = self._load_config()
-        self.s3_client = self._init_s3_client()
-        self.segmenter = segmenter or FixedDurationSegmenter()
-
-    def run(
-            self,
-            task_id: str,
-            source_s3_key: str,
-            target_platforms: List[str],
-            pipeline_steps: List[str],
-            pipeline_params: Dict[str, Any],
-            upload_params: Dict[str, Any],
-            segmenter_params: Optional[Dict[str, Any]] = None,
-            db_session: Optional[Any] = None
-    ) -> Dict[str, Any]:
         """
-        Полный цикл обработки и публикации.
+        Производит переход MediaItem к следующему состоянию, \n
+        НЕ ПУБЛИКУЕТ\n
+        DOWNLOADED -> SEGMENTED/SOURCE
+        -> PROCESSED
+        -> UPLOADED
 
-        Args:
-            task_id: Уникальный ID задачи (изолирует временные файлы)
-            source_s3_key: Ключ исходного видео в S3
-            target_platforms: Список платформ для публикации
-            pipeline_steps: Имена шагов для ProcessorFactory
-            pipeline_params: Параметры для шагов обработки (duration, crop, audio и т.д.)
-            upload_params: Параметры для загрузчиков (title, tags, metadata и т.д.)
-            segmenter_params: Переопределение параметров сегментатора (duration, overlap и т.д.)
-
-        Returns:
-            Агрегированный отчёт в виде dict
+        :param download_task: celery.task, скачивающий исходник
+        :param segment_task: celery.task, запускающий сегментер
+        :param process_task: celery.task, запускающий обработку
+        :param upload_task: celery.task, загружающий в s3
+        :param platfroms_config_path: конфиг платформ yaml
+        :param segmenter_config_path: конфиг сегментеров yaml
+        :param segmenter_params: настройки сегментера, по умолчанию берутся из конфига
         """
-        report = TaskReport(
-            task_id=task_id, status="failed", segments_processed=0, platforms={}, errors=[]
-        )
-        task_dir = Path("/tmp/media") / task_id
-        source_path = task_dir / "source.mp4"
+        self.download_task = download_task
+        self.segment_task = segment_task
+        self.process_task = process_task
+        self.upload_task = upload_task
+
+        self.platforms_config_path = self._resolve_config_path(platfroms_config_path)
+        self.platforms_config = self._load_config(self.platforms_config_path)
+        self.segmenter_config = self._load_config(segmenter_config_path)
+        self.segmenter_params = segmenter_params
+
+    def next_state(self, db_session, media_id):
+        item = db_session.query(MediaItem).filter(
+            MediaItem.id == media_id
+        ).with_for_update().first()
+
+        source = db_session.query(Source).filter(
+            Source.id == item.source_id
+        ).first()
+
+        required_platforms = source.publishers
+
+        remaining_quota = {}
+        for p in required_platforms:
+            remaining_quota[p] = self._get_remaining_quota(db_session, p)
+
+        if not any(remaining_quota.values()):
+            logger.warning(f"Quotas have ended for platforms: {list(remaining_quota.keys())}")
+            return
+
+        next_trigger = self.NEXT_TRIGGER.get(item.status)
+        if not next_trigger:
+            logger.warning(f"Skipping MediaItem with status: '{item.status.value}'")
+
+        logger.info(f"NEXT STATE MediaItem {media_id}")
+        try:
+            getattr(self, f"_{next_trigger}")(media_id, db_session)
+        except AttributeError as e:
+            logger.error(f"Cannot find next trigger: '{next_trigger}' ({e})")
+
+    def get_all_rem_quota(self, db) -> Dict:
+        remaining = {}
+
+        for platform in self.platforms_config.keys():
+            remaining[platform] = self._get_remaining_quota(db, platform)
+
+        return remaining
+
+    def advance_item(self, db, media: MediaItem, trigger_name: str = None):
+        sm = MediaItemSM.MediaStateMachine(model=media, state_field="status")
+        # logger.info(f"CURRENT STATE: {sm.current_state.value}")
+        # logger.info(f"NEXT TRIGGERS KEYS: {list(self.NEXT_TRIGGER.keys())}")
+
+        if not trigger_name:
+            trigger_name = self.NEXT_TRIGGER.get(sm.current_state.value)
+
+        if not trigger_name:
+            return {"action": "skip", "state": sm.current_state.value}
+
+        logger.info(f"ADVANCE MediaItem {media.id}")
+        getattr(sm, trigger_name)()
+        db.commit()
+        return {"action": "success", "state": sm.current_state.value}
+
+    def _start_download(self, media_id, db_session):
+        item = db_session.query(MediaItem).filter(
+            MediaItem.id == media_id
+        ).with_for_update().first()
+
+        logger.info(f"START DOWNLOAD MediaItem {media_id}")
+        self.advance_item(db_session, item)
+        self.download_task.delay(media_id)
+
+    def _start_segment(self, media_id, db_session):
+        item = db_session.query(MediaItem).filter(
+            MediaItem.id == media_id
+        ).with_for_update().first()
 
         try:
-            self._validate_platforms(target_platforms)
+            self._check_disk_space(Path(self.TASKS_PATH), Path(item.local_path))
+        except (RuntimeError, FileNotFoundError) as e:
+            logger.error(f"Start segmenting error: {e}")
+            db_session.rollback(item)
+            return
 
-            task_dir.mkdir(parents=True, exist_ok=True)
-            self._download_from_s3(source_s3_key, str(source_path))
+        platforms = self._get_source_by_media_id(media_id, db_session).publishers
 
-            constraints = self._resolve_constraints(target_platforms)
+        segmenter = self.segmenter_config.get("segmenter")
+        segmenter_params = self.segmenter_config.get(segmenter)
+        constraints = self._resolve_constraints(platforms)
 
-            self._check_disk_space(task_dir, source_path)
+        segmenter_params.update(self.segmenter_params)
+        segmenter_params["output_dir"] = segmenter_params["output_dir"].format(media_id=media_id)
 
-            seg_params = self._prepare_segmenter_params(constraints, segmenter_params)
-            seg_params["output_dir"] = str(task_dir)
+        segmenter_params.update(constraints)
 
-            #расчет квот и ограничение количества создаваемых сегментов
-            if db_session and target_platforms:
-                quotas = [self._get_remaining_quota(db_session, p) for p in target_platforms]
-                min_quota = min(quotas) if quotas else float("inf")
+        logger.info(f"START SEGMENT MediaItem {media_id}")
+        self.advance_item(db_session, item)
+        self.segment_task.delay(media_id, segmenter, segmenter_params)
 
-                if min_quota <= 0:
-                    logger.warning("⚠️ Quota exceeded for all platforms. Skipping task %s", task_id)
-                    report.status = "skipped_quota"
-                    report.platforms = {p: {"status": "skipped", "reason": "daily_quota_exceeded"} for p in target_platforms}
-                    return asdict(report)
+    def _start_process(self, media_id, db_session):
+        item = db_session.query(MediaItem).filter(
+            MediaItem.id == media_id
+        ).with_for_update().first()
 
-                seg_params["max_segments"] = min_quota if isinstance(min_quota, int) else None
+        input_path = item.local_path
+        mid = media_id if not item.parent_id else item.parent_id
+        output_path = f"{self.TASKS_PATH}/{mid}/segments/processed_{media_id}_segment_{int(datetime.now(timezone.utc).timestamp())}.mp4"
 
-            segments = self.segmenter.split(str(source_path), seg_params)
+        if not os.path.isfile(input_path):
+            self.advance_item(db_session, item, "fail_process")
+            raise ValueError(f"Start processing error(media_id={media_id}): input_path = '{str(input_path)}' is not a file")
 
-            if not segments:
-                raise RuntimeError("Segmentation returned empty list. Check duration/overlap constraints.")
+        platforms = self._get_source_by_media_id(media_id, db_session).publishers
+        constraints = self._resolve_constraints(platforms)
 
-            pipeline = ProcessorFactory.get_processor(pipeline_steps)
+        self.advance_item(db_session, item)
+        self.process_task.delay(media_id, input_path, output_path, constraints)
 
-            upload_results: Dict[str, List[Dict[str, Any]]] = {p: [] for p in target_platforms}
+    def _start_upload(self, media_id, db_session):
+        item = db_session.query(MediaItem).filter(
+            MediaItem.id == media_id
+        ).with_for_update().first()
 
-            for idx, seg_path in enumerate(segments):
-                processed_path = task_dir / f"seg_{idx:02d}_final.mp4"
-                pipeline.process(seg_path, str(processed_path), pipeline_params)
+        params = {"prefix": "processed"}
 
-                for platform in target_platforms:
-                    try:
-                        uploader = UploaderFactory.get_uploader(platform)
-                        platform_params = self._build_upload_params(platform, upload_params)
-                        raw_result = uploader.upload(str(processed_path), platform_params)
-                        upload_results[platform].append(self._normalize_result(platform, raw_result))
-                    except Exception as e:
-                        logger.error("Upload failed for %s (segment %d): %s", platform, idx, e)
-                        upload_results[platform].append({"status": "error", "error": str(e)})
-
-                report.segments_processed += 1
-
-            report.platforms = {
-                platform: {
-                    "status": "error" if any(r.get("status") == "error" for r in results) else "success",
-                    "results": results
-                }
-                for platform, results in upload_results.items()
-            }
-
-            has_errors = any(p["status"] == "error" for p in report.platforms.values())
-            report.status = "partial_success" if has_errors else "success"
-            logger.info("Task %s finished. Status: %s", task_id, report.status)
-
-        except Exception as e:
-            report.errors.append(str(e))
-            logger.exception("💥 Critical failure in task %s", task_id)
-        finally:
-            self._cleanup(task_dir)
-            logger.debug("Task %s temp dir cleaned", task_id)
-
-        return asdict(report)
-
-    def _load_config(self) -> dict:
-        with open(self.config_path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        if not isinstance(data, dict):
-            raise ValueError("platforms.yaml must contain a valid YAML mapping")
-        return data
-
-    def _download_from_s3(self, s3_key: str, dest_path: str) -> None:
-        """Скачивает файл из S3. Автоматически очищает ключ от префиксов."""
-        bucket = os.getenv("S3_BUCKET", "media-storage")
-
-        # 1. Очистка ключа от s3://, http://, имени бакета
-        if s3_key.startswith("s3://"):
-            s3_key = s3_key[5:]
-            if "/" in s3_key:
-                bucket, s3_key = s3_key.split("/", 1)
-            else:
-                raise ValueError(f"Invalid s3:// path (missing key): {s3_key}")
-        elif s3_key.startswith(("http://", "https://")):
-            raise ValueError(f"Expected S3 key, got URL: {s3_key}")
-
-        s3_key = s3_key.strip().lstrip("/")
-        if not s3_key:
-            raise ValueError("S3 key is empty after sanitization")
-
-        logger.info("⬇️ Downloading s3://%s/%s → %s", bucket, s3_key, dest_path)
-        self.s3_client.download_file(bucket, s3_key, dest_path)
-
-    def _validate_platforms(self, platforms: List[str]) -> None:
-        for p in platforms:
-            if p not in self.config:
-                raise ValueError(f"Unknown platform '{p}' in platforms.yaml")
+        self.advance_item(db_session, item)
+        self.upload_task.delay(media_id, params)
 
     def _resolve_constraints(self, platforms: List[str]) -> Dict:
         max_duration = None
         aspect_ratio = None
 
         for platform in platforms:
-            cons = self.config[platform].get("constraints", {})
+            cons = self.platforms_config[platform].get("constraints", {})
             dur = cons.get("max_duration")
 
             if dur is not None:
@@ -207,39 +204,14 @@ class MediaProcessingOrchestrator:
 
         return {"max_duration": max_duration, "aspect_ratio": aspect_ratio}
 
-    def _build_upload_params(self, platform: str, base_metadata: dict) -> dict:
-        """Собирает upload_params для конкретной платформы: дефолты + метаданные + валидация."""
-        defaults = self.config.get(platform, {}).get("upload_defaults", {})
-        merged = {**defaults, **base_metadata}
-
-        # Пример базовой валидации/адаптации (можно расширить)
-        merged["title"] = (merged.get("title") or "Short")[:100]
-        merged["description"] = (merged.get("description") or "")[:5000]
-        merged.setdefault("tags", [])
-        merged.setdefault("platform", platform)
-
-        return merged
-
-    def _check_platform_quota(self, db, platform: str) -> bool:
-        """
-        Проверяет дневной лимит публикаций
-        """
-        limit = self.config.get(platform, {}).get("quotas", {}).get("daily_limit")
-        if limit is None:
-            return True
-
-        today = datetime.now(timezone.utc)
-
-        published_count = db.query(Publication).filter(
-            Publication.platform == platform,
-            Publication.status == PublicationStatus.PUBLISHED,
-            func.date(Publication.published_at) == today
-        ).count()
-
-        return published_count < limit
-
     def _get_remaining_quota(self, db, platform: str) -> int | float:
-        limit = self.config.get(platform, {}).get("quotas", {}).get("daily_limit")
+        if platform == "s3":
+            return 0
+        try:
+            limit = self.platforms_config.get(platform, {}).get("quotas", {}).get("daily_limit")
+        except AttributeError:
+            logger.error(f"Cannot get remaining quota for platform: '{platform}', return 0")
+            return 0
         if limit is None: return float("inf")
         today = datetime.now(timezone.utc).date()
         published = db.query(Publication).filter(
@@ -249,74 +221,37 @@ class MediaProcessingOrchestrator:
         ).count()
         return max(0, limit - published)
 
-    @staticmethod
-    def _init_s3_client() -> boto3.client:
-        """Инициализирует S3-клиент с валидацией обязательных переменных."""
-        endpoint = settings.S3_ENDPOINT
-        bucket = settings.S3_BUCKET
-
-        if not endpoint:
-            logger.warning("S3_ENDPOINT not set. Using boto3 defaults (AWS).")
-        if not bucket:
-            raise ValueError("S3 bucket is None (Orchestrator._init_s3_client)")
-
-        return boto3.client(
-            "s3",
-            endpoint_url=endpoint,
-            aws_access_key_id=settings.S3_ACCESS_KEY,
-            aws_secret_access_key=settings.S3_SECRET_KEY,
-            region_name=settings.S3_REGION
-        )
+    # def _build_publish_params(self, platform: str, base_metadata: dict) -> dict:
+    #     """Собирает publish_params для конкретной платформы: дефолты + метаданные"""
+    #     defaults = self.platforms_config.get(platform, {}).get("upload_defaults", {})
+    #     merged = {**defaults, **base_metadata}
+    #
+    #     merged["title"] = merged.get("title")
+    #     merged["description"] = merged.get("description")[:5000]
+    #     merged.setdefault("tags", [])
+    #     merged.setdefault("platform", platform)
+    #
+    #     return merged
 
 
     @staticmethod
-    def _check_disk_space(task_dir: Path, source_path: Path) -> None:
-        required = os.path.getsize(source_path) * 2
-        free = shutil.disk_usage(task_dir).free
-        if free < required:
-            raise RuntimeError(
-                f"Insufficient disk space. Required ~{required / 1024**3:.1f}GB, "
-                f"Available {free / 1024**3:.1f}GB"
-            )
+    def _get_source_by_media_id(media_id, db_session):
+        item = db_session.query(MediaItem).filter(
+            MediaItem.id == media_id
+        ).with_for_update().first()
+
+        return db_session.query(Source).filter(
+            Source.id == item.source_id
+        ).first()
 
 
     @staticmethod
-    def _prepare_segmenter_params(
-        constraints: dict, explicit_params: Optional[dict]
-    ) -> dict:
-        """Собирает конфиг для сегментатора с приоритетом: explicit > constraints"""
-        return {
-            "duration": constraints.get("max_duration") or explicit_params.get("duration", 55),
-            "overlap": explicit_params.get("overlap", 0),
-            "output_dir": "/tmp/media",  # переопределяется в split(), но оставляем для ясности
-            "min_chunk": explicit_params.get("min_chunk", 5),
-            "max_segments": explicit_params.get("max_segments"),
-        }
-
-
-    @staticmethod
-    def _cleanup(task_dir: Path) -> None:
-        if task_dir.exists():
-            shutil.rmtree(task_dir, ignore_errors=True)
-
-
-    @staticmethod
-    def _normalize_result(platform: str, raw_result: Any) -> Dict[str, Any]:
-        """Приводит результат загрузчика к единому формату отчёта (Pydantic v1/v2 safe)."""
-        if isinstance(raw_result, UploadResult):
-            # Совместимо с Pydantic v1 (.dict()) и v2 (.model_dump())
-            dump = raw_result.model_dump() if hasattr(raw_result, "model_dump") else raw_result.dict()
-            dump["platform"] = platform
-            return dump
-
-        # Fallback для S3Uploader (возвращает str)
-        return {
-            "success": True,
-            "url": str(raw_result),
-            "external_id": str(raw_result),
-            "platform": platform,
-            "metadata": {}
-        }
+    def _load_config(config_path) -> dict:
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if not isinstance(data, dict):
+            raise ValueError("platforms.yaml must contain a valid YAML mapping")
+        return data
 
 
     @staticmethod
@@ -338,3 +273,22 @@ class MediaProcessingOrchestrator:
             if p.is_file():
                 return p
         raise FileNotFoundError("platforms.yaml not found. Provide config_path or place it in project root.")
+
+
+    @staticmethod
+    def _check_disk_space(task_dir: Path, source_path: Path) -> None:
+        required = os.path.getsize(source_path) * 2
+        free = shutil.disk_usage(task_dir).free
+        if free < required:
+            raise RuntimeError(
+                f"Insufficient disk space. Required ~{required / 1024**3:.1f}GB, "
+                f"Available {free / 1024**3:.1f}GB"
+            )
+
+
+    @staticmethod
+    def cleanup(media_id: int) -> None:
+        task_dir = Path(f"/tmp/media/{media_id}")
+
+        if task_dir.exists():
+            shutil.rmtree(task_dir, ignore_errors=True)

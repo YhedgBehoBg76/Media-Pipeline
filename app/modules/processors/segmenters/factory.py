@@ -1,4 +1,4 @@
-from fixed_duration_segmenter import FixedDurationSegmenter
+from app.modules.processors.segmenters.fixed_duration_segmenter import FixedDurationSegmenter
 
 
 SEGMENTERS = {

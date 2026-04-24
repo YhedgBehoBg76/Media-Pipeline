@@ -51,18 +51,18 @@ class FixedDurationSegmenter:
             FileNotFoundError: Если входной файл не существует.
             RuntimeError: При невозможности создать output_dir или прочитать метаданные.
         """
-        duration = params.get("duration")
+        duration = params.get("max_duration")
         overlap = params.get("overlap")
         output_dir = params.get("output_dir", "/tmp/media")
         min_chunk = params.get("min_chunk", 5)
         max_segments = params.get("max_segments")
 
         if not isinstance(duration, (int, float)) or duration <= 0:
-            raise ValueError("duration должно быть числом > 0")
+            raise ValueError(f"Duration must be a number > 0, duration: {duration}")
         if not isinstance(overlap, (int, float)) or not (0 <= overlap < duration):
-            raise ValueError(f"overlap должен быть 0 <= overlap < duration={duration}, но overlap={overlap}")
+            raise ValueError(f"Overlap must be 0 <= overlap < duration={duration}, но overlap={overlap}")
         if not os.path.isfile(input_path):
-            raise FileNotFoundError(f"Входной файл не найден: {input_path}")
+            raise FileNotFoundError(f"Input file not found: {input_path}")
 
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 

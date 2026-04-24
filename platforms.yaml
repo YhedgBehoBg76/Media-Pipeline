@@ -1,5 +1,3 @@
-segmenter: "fixed_duration_segmenter"
-
 youtube_shorts:
   constraints:
     max_duration: 55

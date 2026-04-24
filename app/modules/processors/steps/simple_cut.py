@@ -23,7 +23,8 @@ class SimpleCutStep(ProcessingStrategy):
             output_path
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        with open(output_path, "a"):
+            result = subprocess.run(cmd, capture_output=True, text=True)
 
         if result.returncode != 0:
             raise Exception(f"[SimpleCutStrategy] FFmpeg error: {result.stderr}")

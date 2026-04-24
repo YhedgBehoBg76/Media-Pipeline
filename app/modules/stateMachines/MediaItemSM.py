@@ -5,49 +5,62 @@ import logging
 logger = logging.getLogger(__name__)
 
 class MediaStateMachine(StateMachine):
+    # 🔹 Состояния
+    pending = State(value=MediaStatus.PENDING, initial=True)
+    downloading = State(value=MediaStatus.DOWNLOADING)
+    downloaded = State(value=MediaStatus.DOWNLOADED)
+    segmenting = State(value=MediaStatus.SEGMENTING)
+    segmented = State(value=MediaStatus.SEGMENTED)
+    source = State(value=MediaStatus.SOURCE)
+    processing = State(value=MediaStatus.PROCESSING)
+    processed = State(value=MediaStatus.PROCESSED)
+    uploading = State(value=MediaStatus.UPLOADING)
+    uploaded = State(value=MediaStatus.UPLOADED)
+    publishing = State(value=MediaStatus.PUBLISHING)
+    published = State(value=MediaStatus.PUBLISHED, final=True)
+    failed = State(value=MediaStatus.FAILED)
 
-    pending = State(MediaStatus.PENDING.value, initial=True)
-    downloading = State(MediaStatus.DOWNLOADING.value)
-    downloaded = State(MediaStatus.DOWNLOADED.value)
-    segmenting = State(MediaStatus.SEGMENTING.value)
-    segmented = State(MediaStatus.SEGMENTED.value)
-    source = State(MediaStatus.SOURCE.value)
-    processing = State(MediaStatus.PROCESSING.value)
-    processed = State(MediaStatus.PROCESSED.value)
-    uploading = State(MediaStatus.UPLOADING.value)
-    uploaded = State(MediaStatus.UPLOADED.value)
-    publishing = State(MediaStatus.PUBLISHING.value)
-    published = State(MediaStatus.PUBLISHED.value)
-    failed = State(MediaStatus.FAILED.value)
+    # 🔹 Основные переходы (State → State)
 
-    fail = (downloading | segmenting | processing | uploading | publishing).to(failed)
+    _init_segmented = pending.to(segmented)
 
     start_download = pending.to(downloading)
-    retry_download = failed.to(downloading)
-    finish_download = (start_download | fail).to(downloaded)
+    finish_download = downloading.to(downloaded)  # Исправлено: переход идёт от состояния, а не от другого триггера
 
     start_segment = downloaded.to(segmenting)
-    retry_segment = failed.to(segmenting)
-    finish_segment = (start_segment | fail).to(source)
+    finish_segment = segmenting.to(source)
 
     start_process = segmented.to(processing)
+    finish_process = processing.to(processed)
+
+    start_upload = processed.to(uploading)
+    finish_upload = uploading.to(uploaded)
+
+    start_publish = uploaded.to(publishing)
+    finish_publish = publishing.to(published)
+
+    source_to_published = source.to(published)
+
+    # 🔹 Переходы в ошибку (вместо | прописаны явно)
+    fail_download = downloading.to(failed)
+    fail_segment = segmenting.to(failed)
+    fail_process = processing.to(failed)
+    fail_upload = uploading.to(failed)
+    fail_publish = publishing.to(failed)
+
+    # 🔹 Ретраи из failed
+    retry_download = failed.to(downloading)
+    retry_segment = failed.to(segmenting)
     retry_process = failed.to(processing)
-    finish_process = (start_process | fail).to(processed)
-
-    start_upload = finish_process.to(uploading)
     retry_upload = failed.to(uploading)
-    finish_upload = (start_upload | fail).to(uploaded)
+    retry_publish = failed.to(publishing)  # Логичнее возвращаться в publishing, а не сразу в published
+    retry_full = failed.to(pending)
 
-    start_publish = finish_upload.to(publishing)
-    retry_publish = failed.to(published)
-    finish_publish = (start_publish | fail).to(published)
-
-    retry = failed.to(pending)
-
-    @downloading.on_enter
-    def log_start_download(self):
-        self.logger.info(f"Media Item (id={self.model.id}) starts downloading...")
-
-    @segmenting.on_enter
-    def log_start_segmenting(self):
-        self.logger.info(f"Media Item (id={self.model.id}) starts segmenting...")
+    # 🔹 Хуки
+    # @downloading.on_enter
+    # def log_start_download(self):
+    #     logger.info(f"Media Item (id={self.model.id}) starts downloading...")
+    #
+    # @segmenting.on_enter
+    # def log_start_segmenting(self):
+    #     logger.info(f"Media Item (id={self.model.id}) starts segmenting...")
