@@ -212,6 +212,7 @@ class MediaOrchestrator:
         except AttributeError:
             logger.error(f"Cannot get remaining quota for platform: '{platform}', return 0")
             return 0
+        logger.info(f"LIMIT FOR PLATFORM '{platform}: {limit}'")
         if limit is None: return float("inf")
         today = datetime.now(timezone.utc).date()
         published = db.query(Publication).filter(

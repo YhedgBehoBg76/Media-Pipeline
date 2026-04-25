@@ -1,68 +1,90 @@
-# app/modules/uploaders/youtube_auth.py
 import os
 import pickle
 import logging
-
-from google.auth.transport.requests import Request
+import asyncio
+import httpx
+import time
+import json
+from typing import Optional, Tuple
+from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi.responses import JSONResponse
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request as GoogleRequest
 from googleapiclient.discovery import build
-from google_auth_oauthlib.flow import InstalledAppFlow
-
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/youtube/auth", tags=["YouTube Auth"])
 
+# Для HTTP-запросов Google требует пробелы, для Credentials — список
 SCOPES = [
-    "https://www.googleapis.com/auth/youtube.upload",
-    "https://www.googleapis.com/auth/youtube.force-ssl"
+    "https://www.googleapis.com/auth/youtube"
+    # "https://www.googleapis.com/auth/youtube.upload",
+    # "https://www.googleapis.com/auth/youtube.force-ssl"
 ]
+SCOPES_STR = " ".join(SCOPES)
+DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code"
+TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+# 📦 In-memory хранилище активных сессий. В продакшене замените на Redis/PostgreSQL.
+_pending_flows: dict[str, dict] = {}
 
 
 class YouTubeTokenExpiredError(Exception):
-    """Refresh-токен невалиден. Требуется ручная авторизация."""
-    def __init__(self, auth_url: str):
-        self.auth_url = auth_url
-        super().__init__(f"YouTube token expired. Authorize: {auth_url}")
+    def __init__(self, verification_url: str, user_code: str, device_code: str):
+        self.verification_url = verification_url
+        self.user_code = user_code
+        self.device_code = device_code
+        super().__init__(f"Token expired. Open {verification_url} and enter code: {user_code}")
 
 
-def get_authorization_url() -> str:
-    secrets_path = settings.GOOGLE_TOKEN_PATH
-    flow = InstalledAppFlow.from_client_secrets_file(secrets_path, SCOPES)
-    url, _ = flow.authorization_url(access_type="offline", prompt="consent")
-    return url
+def _save_token_sync(creds: Credentials) -> None:
+    token_path = settings.GOOGLE_TOKEN_PATH
+    os.makedirs(os.path.dirname(token_path), exist_ok=True)
+    with open(token_path, "wb") as f:
+        pickle.dump(creds, f)
 
 
-def get_authenticated_client():
+def _load_token_sync(path: str) -> Optional[Credentials]:
+    if not os.path.exists(path):
+        logger.error(f"GOOGLE TOKEN PATH DOES NOT EXISTS: '{path}'")
+        return None
+    with open(path, "rb") as f:
+        return pickle.load(f)
+
+
+async def get_authenticated_client() -> build:
     """
-    OAuth 2.0 авторизация для личных аккаунтов.
-
-    Токен генерируется на хосте и монтируется в контейнер.
-
-    Returns:
-        YouTube API client
+    Получает YouTube клиент с авто-рефрешем.
     """
-    creds = None
-
     token_path = settings.GOOGLE_TOKEN_PATH
 
-    # 1. Загружаем сохранённый токен
-    if os.path.exists(token_path):
-        with open(token_path, 'rb') as token:  # type: ignore[arg-type]
-            creds = pickle.load(token)
+    # Загружаем токен
+    creds = await asyncio.to_thread(_load_token_sync, token_path)
 
-    # 2. Если токена нет или он истёк
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            # Токен можно обновить без браузера
-            creds.refresh(Request())
-            # Сохраняем обновлённый токен (если том с правами на запись)
-            with open(token_path, 'wb') as token:
-                pickle.dump(creds, token) # type: ignore[arg-type]
-    else:
+    if creds and creds.valid:
+        logger.debug("✅ Using valid access token")
+        return build("youtube", "v3", credentials=creds)
+
+    # Пробуем рефреш
+    if creds and creds.refresh_token:
         try:
-            creds.refresh(Request())
-        except Exception:  # RefreshError, TransportError и т.д.
-            auth_url = get_authorization_url()
-            logger.critical("🔑 YouTube refresh_token invalid. Generate new token: %s", auth_url)
-            raise YouTubeTokenExpiredError(auth_url)
+            logger.info("🔄 Refreshing expired token...")
+            await asyncio.to_thread(lambda: creds.refresh(GoogleRequest()))
+            await asyncio.to_thread(_save_token_sync, creds)  # Сохраняем новый access_token
+            logger.info("✅ Token refreshed successfully")
+            return build("youtube", "v3", credentials=creds)
+        except Exception as e:
+            logger.error(f"❌ Token refresh failed: {type(e).__name__}: {e}")
+            # Не падаем сразу — даём шанс на переавторизацию
 
-    return build('youtube', 'v3', credentials=creds)
+    raise HTTPException(
+        status_code=401,
+        detail={
+            "error": "youtube_auth_token_invalid",
+            "message": "YouTube token expired or missing refresh capability",
+            "action": "Please regenerate token using generate_token.py on a machine with browser",
+            "command": f"python generate_token.py client_secrets.json {token_path}",
+            "transfer_hint": "Then copy the file to this server via scp/rsync/base64"
+        }
+    )

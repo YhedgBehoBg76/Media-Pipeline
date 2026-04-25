@@ -5,12 +5,14 @@ from pathlib import Path
 from typing import Dict
 from celery import Celery, chain
 from celery.schedules import crontab
+from sqlalchemy.sql import func
 
 from app.api.routes.sources import scan_source
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.media import MediaItem, MediaStatus
 from app.models.sources import Source
+from app.models.publication import Publication, PublicationStatus
 from app.modules.processors.factory import ProcessorFactory
 from app.modules.downloaders.factory import DownloaderFactory
 from app.modules.uploaders.factory import UploaderFactory
@@ -26,13 +28,14 @@ logger = logging.getLogger(__name__)
 @celery_app.task
 def update_unpublished_status():
     db = SessionLocal()
-    unpublished_items = db.query(MediaItem).filter(
-        MediaItem.status != MediaStatus.PUBLISHED
+    unpublished_items = db.query(MediaItem.id).filter(
+        MediaItem.status != MediaStatus.PUBLISHED and
+        MediaItem.status != MediaStatus.UPLOADED
     ).all()
 
     if unpublished_items:
         for item in unpublished_items:
-            orchestrator.next_state(db, item.id)
+            orchestrator.next_state(db, item[0])
     else:
         qouta = orchestrator.get_all_rem_quota(db).values()
         if any(qouta):
@@ -76,6 +79,10 @@ def download_media(self, media_id: int):
     item = db.query(MediaItem).filter(
         MediaItem.id == media_id
     ).with_for_update().first()
+
+    if self.retry > 0:
+        orchestrator.advance_item(db, item, "retry_download")
+
     try:
         if not item or not item.original_url:
             raise ValueError(f"MediaItem {media_id} missing or no original_url('{item.original_url}')")
@@ -105,6 +112,9 @@ def segment_media(self, media_id: int, segmenter_name: str, params: Dict):
     item = db.query(MediaItem).filter(
         MediaItem.id == media_id
     ).with_for_update().first()
+
+    if self.retry > 0:
+        orchestrator.advance_item(db, item, "retry_segment")
 
     segmenter = get_segmenter(segmenter_name)()
 
@@ -153,6 +163,9 @@ def process_media(self, media_id: int, input_path: str, output_path: str, params
         Source.id == item.source_id
     ).first().strategy
 
+    if self.retry > 0:
+        orchestrator.advance_item(db, item, "retry_process")
+
     try:
         processor = ProcessorFactory.get_processor(strategy)
         success = processor.process(input_path, output_path, params)
@@ -178,6 +191,8 @@ def upload_to_s3_media(self, media_id: int, params: Dict):
     ).with_for_update().first()
 
     s3_uploader = UploaderFactory.get_uploader("s3")
+    if self.retry > 0:
+        orchestrator.advance_item(db, item, "retry_upload")
 
     try:
         s3_path = s3_uploader.upload(item.local_path, params)
@@ -191,16 +206,43 @@ def upload_to_s3_media(self, media_id: int, params: Dict):
 
 
 @celery_app.task(bind=True, max_retries=4, default_retry_delay=60)
-def publish_media(self, db, item, platform: str, path: str, params: Dict):
+def publish_media(self, item_id: int, platform: str, path: str, params: Dict):
+    db = SessionLocal()
+
+    item = db.query(MediaItem).filter(
+        MediaItem.id == item_id
+    ).with_for_update().first()
+    next_trigger = "start_publish" if self.retry == 0 else "retry_publish"
+    orchestrator.advance_item(db, item, next_trigger)
     publisher = UploaderFactory.get_uploader(platform)
+
+    publication = db.query(Publication).filter(
+        Publication.media_id == item_id and
+        Publication.platform == platform
+    ).first()
+
     try:
-        publisher.upload(path, params)
+        result = publisher.upload(path, params)
+
+        if not publication:
+            publication = Publication(
+                media_id=item_id,
+                platform=platform,
+                error_message=result.metadata,
+                published_at=func.now(),
+                external_url=result.url
+            )
+
+        publication.status = PublicationStatus.PUBLISHED if result.status else PublicationStatus.FAILED
+
+        db.add(publication)
+
         orchestrator.advance_item(db, item, "finish_publish")
     except Exception as e:
         db.rollback()
         orchestrator.advance_item(db, item, "fail_publish")
         logger.error(f"Publishing to {platform} failed for MeadiaItem %d: %s", item.id, e)
-        raise self.retry(exc=e, countdown=60 * (self.request.retries + 1))
+        raise self.retry(exc=e, countdown=120 * (self.request.retries + 1))
 
 
 @celery_app.task
@@ -213,28 +255,31 @@ def publish_uploaded_media():
 
     item = db.query(MediaItem).filter(
         MediaItem.status == MediaStatus.UPLOADED
-    ).with_for_update().first()
+    ).first()
 
     if not item:
         return
 
-    publish_platforms = db.query(Source).filter(
+    publish_platforms = db.query(Source.publishers).filter(
         Source.id == item.source_id
-    ).first().publishers
+    ).first()
 
     for platform in publish_platforms:
+        platform = platform[0]
+        # logger.warning(f"REM QUOTA FOR '{platform}': {remaining_quota[platform]}, type: {type(remaining_quota[platform])}")
         if remaining_quota[platform] == 0:
-                continue
+            continue
 
         upload_params = orchestrator.platforms_config[platform].get("upload_defaults", {})
+        if upload_params is None:
+            logger.warning(f"UPLOAD PARAMS IS NONE for platform: '{platform}'")
         upload_params.update(item.video_metadata)
         path = Path(item.local_path)
         local_path = f"{path.stem}_from_s3{path.suffix}"
 
-        download_from_s3(item.s3_key, local_path)
+        download_from_s3(item.s3_path, local_path)
 
-        params = orchestrator.platforms_config[platform].get("upload_defaults", {}).update(item.video_metadata)
-        publish_media.delay(db, item, platform, local_path, params)
+        publish_media.delay(item.id, platform, local_path, upload_params)
 
 
 @celery_app.task
@@ -252,12 +297,12 @@ def cleanup_sources_task():
         child_status = set([i.status for i in child_items])
 
         if not len(child_status) == 1:
-            logger.info(f"Skipping cleaning MediaItem {item.id} folder(child_status=({', '.join(child_status)}))...")
+            logger.info(f"Skipping cleaning MediaItem {item.id} folder...")
             continue
 
         status = list(child_status)[0]
         if not status in (MediaStatus.UPLOADED, MediaStatus.PUBLISHED):
-            logger.info(f"Skipping cleaning MediaItem {item.id} folder(child_status=({', '.join(child_status)}))...")
+            logger.info(f"Skipping cleaning MediaItem {item.id} folder...")
             continue
 
         if status == MediaStatus.PUBLISHED:
@@ -274,18 +319,18 @@ orchestrator = MediaOrchestrator(
 
 
 celery_app.conf.beat_schedule = {
-    "update-unpublished-media-status": {
-        "task": "app.worker.tasks.update_unpublished_status",
-        "schedule": crontab(minute="*/2"),  # Каждые 2 минуты
-    },
+    # "update-unpublished-media-status": {
+    #     "task": "app.worker.tasks.update_unpublished_status",
+    #     "schedule": crontab(minute="*/30"),
+    # },
 
     "publish-uploaded-to-s3-media": {
         "task": "app.worker.tasks.publish_uploaded_media",
-        "schedule": crontab(minute="*/30")
+        "schedule": crontab(minute="*/5")
     },
 
     "cleanup-sources-media":{
         "task": "app.worker.tasks.cleanup_sources_task",
-        "schedule": crontab(hour="*/30")
+        "schedule": crontab(minute="*/30")
     }
 }

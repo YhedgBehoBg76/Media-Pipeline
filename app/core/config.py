@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     YOUTUBE_API_KEY: str = ""
     GOOGLE_CREDENTIALS_PATH: str = "/app/secrets/credentials.json"
     GOOGLE_TOKEN_PATH: str
+    GOOGLE_CLIENT_ID: str
     PLATFORMS_CONFIG_PATH: str
     SEGMENTERS_CONFIG_PATH: str
 

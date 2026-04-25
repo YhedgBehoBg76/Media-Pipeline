@@ -1,5 +1,6 @@
 # app/modules/uploaders/youtube_uploader.py
 import os
+from asyncio import run
 
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -25,9 +26,9 @@ class YouTubeUploader(UploaderAdapter):
 
     def upload(self, file_path: str, params: dict) -> UploadResult:
         try:
-            youtube = get_authenticated_client()
+            youtube = run(get_authenticated_client())
         except YouTubeTokenExpiredError as e:
-            logger.critical("⚠️ ACTION REQUIRED: %s", e.auth_url)
+            logger.critical("⚠️ ACTION REQUIRED: %s.\nUSER_CODE: %s.\nDEVICE_CODE: %s", e.verification_url, e.user_code, e.device_code)
             raise
 
         title = params.get("title", f"Shorts {params.get('media_id')}")[:100]

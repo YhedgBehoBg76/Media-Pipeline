@@ -5,43 +5,44 @@ import logging
 from pathlib import Path
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-# ← Убраны пробелы в конце!
+
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.force-ssl"
 ]
+
+main_dir = Path(os.curdir).parent
+CREDS_PATH = f"{main_dir}/secrets/google_client_secret.json"
+TOKEN_PATH = f"{main_dir}/secrets/token.pickle"
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 def main():
-    creds_path = os.getenv("GOOGLE_CREDENTIALS_PATH", "secrets/google_client_secret.json")
-    token_path = os.getenv("GOOGLE_OUTPUT_PATH", "secrets/token.pickle")
-
-    logger.info(f"Using credentials: {creds_path}")
-    logger.info(f"Token will be saved to: {token_path}")
+    logger.info(f"Using credentials: {CREDS_PATH}")
+    logger.info(f"Token will be saved to: {TOKEN_PATH}")
 
     # ← Проверка: существует ли файл credentials
-    if not os.path.exists(creds_path):
-        logger.error(f"Credentials file not found: {creds_path}")
+    if not os.path.exists(CREDS_PATH):
+        logger.error(f"Credentials file not found: {CREDS_PATH}")
         logger.error("Download it from Google Cloud Console → Credentials → OAuth client ID")
         return
 
     # ← Создаём папку для токена, если нет
-    token_dir = Path(token_path).parent
+    token_dir = Path(TOKEN_PATH).parent
     token_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        flow = InstalledAppFlow.from_client_secrets_file(creds_path, SCOPES)
+        flow = InstalledAppFlow.from_client_secrets_file(CREDS_PATH, SCOPES)
         logger.info("Opening browser for authentication...")
         creds = flow.run_local_server(port=0)
 
-        # ← Сохраняем токен (с игнором предупреждения PyCharm)
-        with open(token_path, 'wb') as token:  # type: ignore[arg-type]
-            pickle.dump(creds, token)
+        # ← Сохраняем токен
+        with open(TOKEN_PATH, 'wb') as token:
+            pickle.dump(creds, token) # type: ignore[arg-type]
 
-        logger.info(f"✓ Token saved to: {token_path}")
+        logger.info(f"✓ Token saved to: {TOKEN_PATH}")
         logger.info("Mount this file into Docker container at /app/secrets/token.pickle")
 
     except Exception as e:
