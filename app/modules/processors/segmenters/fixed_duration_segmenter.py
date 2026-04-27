@@ -85,7 +85,7 @@ class FixedDurationSegmenter:
         stem = Path(input_path).stem
 
         for idx, (start, dur) in enumerate(timing_points):
-            out_name = f"{stem}_{task_id}_seg_{idx:02d}.mp4"
+            out_name = f"{stem}_{task_id}_seg_{idx}.mp4"
             out_path = os.path.join(output_dir, out_name)
 
             if not self._run_ffmpeg_segment(input_path, out_path, start, dur):

@@ -80,7 +80,7 @@ def download_media(self, media_id: int):
         MediaItem.id == media_id
     ).with_for_update().first()
 
-    if self.retry > 0:
+    if self.request.retries > 0:
         orchestrator.advance_item(db, item, "retry_download")
 
     try:
@@ -113,14 +113,14 @@ def segment_media(self, media_id: int, segmenter_name: str, params: Dict):
         MediaItem.id == media_id
     ).with_for_update().first()
 
-    if self.retry > 0:
+    if self.request.retries > 0:
         orchestrator.advance_item(db, item, "retry_segment")
 
     segmenter = get_segmenter(segmenter_name)()
 
     try:
         rem_quotas = orchestrator.get_all_rem_quota(db)
-        max_segments = sum(rem_quotas.values())
+        max_segments = sum(rem_quotas.values()) * 3
 
         if max_segments == 0:
             logger.warning(f"Skipping segment MediaItem {media_id} because remaining_quotas is 0")
@@ -130,7 +130,11 @@ def segment_media(self, media_id: int, segmenter_name: str, params: Dict):
 
         segments = segmenter.split(item.local_path, params)
 
-        for segment in segments:
+        for i, segment in enumerate(segments):
+            meta = item.video_metadata.copy()
+            meta.update(
+                {"title": f"ЧАСТЬ {i+1} | {item.video_metadata.get('title')}"}
+            )
             media_item = MediaItem(
                 external_id=item.external_id,
                 source_id=item.source_id,
@@ -139,7 +143,7 @@ def segment_media(self, media_id: int, segmenter_name: str, params: Dict):
                 local_path=segment,
                 status=MediaStatus.SEGMENTED,
                 used_strategy=item.used_strategy,
-                video_metadata=item.video_metadata
+                video_metadata=meta
             )
 
             db.add(media_item)
@@ -163,7 +167,7 @@ def process_media(self, media_id: int, input_path: str, output_path: str, params
         Source.id == item.source_id
     ).first().strategy
 
-    if self.retry > 0:
+    if self.request.retries > 0:
         orchestrator.advance_item(db, item, "retry_process")
 
     try:
@@ -191,7 +195,7 @@ def upload_to_s3_media(self, media_id: int, params: Dict):
     ).with_for_update().first()
 
     s3_uploader = UploaderFactory.get_uploader("s3")
-    if self.retry > 0:
+    if self.request.retries > 0:
         orchestrator.advance_item(db, item, "retry_upload")
 
     try:
@@ -212,7 +216,7 @@ def publish_media(self, item_id: int, platform: str, path: str, params: Dict):
     item = db.query(MediaItem).filter(
         MediaItem.id == item_id
     ).with_for_update().first()
-    next_trigger = "start_publish" if self.retry == 0 else "retry_publish"
+    next_trigger = "start_publish" if self.request.retries == 0 else "retry_publish"
     orchestrator.advance_item(db, item, next_trigger)
     publisher = UploaderFactory.get_uploader(platform)
 
@@ -228,14 +232,13 @@ def publish_media(self, item_id: int, platform: str, path: str, params: Dict):
             publication = Publication(
                 media_id=item_id,
                 platform=platform,
-                error_message=result.metadata,
+                error_message=str(result.metadata),
                 published_at=func.now(),
                 external_url=result.url
             )
+            db.add(publication)
 
-        publication.status = PublicationStatus.PUBLISHED if result.status else PublicationStatus.FAILED
-
-        db.add(publication)
+        publication.status = PublicationStatus.PUBLISHED if result.success else PublicationStatus.FAILED
 
         orchestrator.advance_item(db, item, "finish_publish")
     except Exception as e:
@@ -275,7 +278,8 @@ def publish_uploaded_media():
             logger.warning(f"UPLOAD PARAMS IS NONE for platform: '{platform}'")
         upload_params.update(item.video_metadata)
         path = Path(item.local_path)
-        local_path = f"{path.stem}_from_s3{path.suffix}"
+        filename = f"{path.stem}_from_s3{path.suffix}"
+        local_path = f"/{Path(item.local_path).parent}/{filename}"
 
         download_from_s3(item.s3_path, local_path)
 
@@ -306,7 +310,12 @@ def cleanup_sources_task():
             continue
 
         if status == MediaStatus.PUBLISHED:
-            orchestrator.advance_item(db, item, "finish_publish")
+            orchestrator.advance_item(db, item, "source_to_published")
+            try:
+                s3_client.delete_object(Bucket=settings.S3_BUCKET, Key=item.s3_path)
+            except Exception as e:
+                logger.error(f"Failed delete segment from s3: {e}")
+
         orchestrator.cleanup(item.id)
 
 
@@ -319,10 +328,10 @@ orchestrator = MediaOrchestrator(
 
 
 celery_app.conf.beat_schedule = {
-    # "update-unpublished-media-status": {
-    #     "task": "app.worker.tasks.update_unpublished_status",
-    #     "schedule": crontab(minute="*/30"),
-    # },
+    "update-unpublished-media-status": {
+        "task": "app.worker.tasks.update_unpublished_status",
+        "schedule": crontab(hour="*/2"),
+    },
 
     "publish-uploaded-to-s3-media": {
         "task": "app.worker.tasks.publish_uploaded_media",
@@ -331,6 +340,6 @@ celery_app.conf.beat_schedule = {
 
     "cleanup-sources-media":{
         "task": "app.worker.tasks.cleanup_sources_task",
-        "schedule": crontab(minute="*/30")
+        "schedule": crontab(hour="*/3")
     }
 }

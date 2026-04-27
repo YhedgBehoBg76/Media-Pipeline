@@ -8,8 +8,6 @@ from app.core.config import settings
 from app.models.media import MediaItem
 from abc import abstractmethod
 
-#TODO: 2. Сделать отсеивание шортсов в YoutubeSearchAdapter. Сейчас он находит и сохраняет в MediaItem ссылки на шортсы
-#TODO: 3. Надо чето сделать с _on_state_update. Возможно стоит добавить это поле в SourceAdapter
 
 class BaseYoutubeAdapter(SourceAdapter):
     ALLOWED_LICENSES = {"any", "creativeCommon"}

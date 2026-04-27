@@ -1,6 +1,7 @@
 # app/modules/uploaders/youtube_uploader.py
 import os
 from asyncio import run
+import yaml
 
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -17,9 +18,6 @@ logger = logging.getLogger(__name__)
 
 
 class YouTubeUploader(UploaderAdapter):
-    PRIVACY_STATUS = 'private'
-    CATEGORY_ID = '22'
-
     @property
     def name(self) -> str:
         return "youtube_shorts"
@@ -40,8 +38,8 @@ class YouTubeUploader(UploaderAdapter):
         request = youtube.videos().insert(
             part="snippet,status",
             body={
-                "snippet": {"title": title, "description": description, "tags": tags, "categoryId": self.CATEGORY_ID},
-                "status": {"privacyStatus": self.PRIVACY_STATUS, "selfDeclaredMadeForKids": False}
+                "snippet": {"title": title, "description": f"{description}\n\n{' '.join(tags)}", "tags": tags, "categoryId": params.get("category_id")},
+                "status": {"privacyStatus": params.get("privacy"), "selfDeclaredMadeForKids": False}
             },
             media_body=media
         )

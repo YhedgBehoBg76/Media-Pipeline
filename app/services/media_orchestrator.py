@@ -144,7 +144,7 @@ class MediaOrchestrator:
         platforms = self._get_source_by_media_id(media_id, db_session).publishers
 
         segmenter = self.segmenter_config.get("segmenter")
-        segmenter_params = self.segmenter_config.get(segmenter)
+        segmenter_params = self.segmenter_config.get(segmenter).copy()
         constraints = self._resolve_constraints(platforms)
 
         segmenter_params.update(self.segmenter_params)
@@ -152,7 +152,6 @@ class MediaOrchestrator:
 
         segmenter_params.update(constraints)
 
-        logger.info(f"START SEGMENT MediaItem {media_id}")
         self.advance_item(db_session, item)
         self.segment_task.delay(media_id, segmenter, segmenter_params)
 
@@ -212,7 +211,6 @@ class MediaOrchestrator:
         except AttributeError:
             logger.error(f"Cannot get remaining quota for platform: '{platform}', return 0")
             return 0
-        logger.info(f"LIMIT FOR PLATFORM '{platform}: {limit}'")
         if limit is None: return float("inf")
         today = datetime.now(timezone.utc).date()
         published = db.query(Publication).filter(
