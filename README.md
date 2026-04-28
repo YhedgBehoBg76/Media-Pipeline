@@ -57,7 +57,7 @@ Media Pipeline — это микросервисная архитектура д
 1. **Клонирование репозитория**
 ```bash
 git clone https://github.com/YhedgBehoBg76/highlightsuploader.git
-cd media-pipeline
+cd Media-Pipeline
 ```
 
 2. **Настройка переменных окружения**
