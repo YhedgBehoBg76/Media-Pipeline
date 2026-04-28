@@ -65,12 +65,11 @@ def download_from_s3(s3_key: str, dest_path: str) -> None:
     if not s3_key:
         raise ValueError("S3 key is empty after sanitization")
 
-    path = Path(dest_path)
+    path = Path(dest_path).resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    logger.info("⬇️ Downloading s3://%s/%s → %s", bucket, s3_key, dest_path)
-    s3_client.download_file(bucket, s3_key, dest_path)
-
+    logger.info("⬇️ Downloading s3://%s/%s → %s", bucket, s3_key, str(path))
+    s3_client.download_file(bucket, s3_key, str(dest_path))
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
