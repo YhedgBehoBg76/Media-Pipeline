@@ -151,93 +151,7 @@ GET /media/{media_id}
 
 ## 🔌 Типы источников и их конфигурация
 
-### 1. YouTube Search (`youtube_search`)
-
-Поиск видео на YouTube по запросу.
-
-**Конфигурация:**
-```json
-{
-  "query": "funny cats",
-  "license": "creativeCommon",
-  "max_results": 10,
-  "order": "relevance"
-}
-```
-
-**Параметры config:**
-
-| Параметр | Тип | Обязательный | По умолчанию | Описание |
-|----------|-----|--------------|--------------|----------|
-| `query` | string | ✅ | - | Поисковый запрос |
-| `license` | string | ❌ | `creativeCommon` | Фильтр лицензии: `any`, `creativeCommon` |
-| `max_results` | integer | ❌ | `10` | Максимум результатов (1-50) |
-| `order` | string | ❌ | `relevance` | Сортировка: `date`, `rating`, `relevance`, `title`, `viewCount` |
-
-**Пример создания:**
-```bash
-curl -X POST http://localhost:8000/sources \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "youtube_search",
-    "config": {
-      "query": "cartoon spongebob",
-      "license": "creativeCommon",
-      "max_results": 20,
-      "order": "viewCount"
-    },
-    "publishers": ["youtube_shorts"],
-    "strategy": ["simple_cut"]
-  }'
-```
-
-### 2. YouTube Channels (`youtube_channels`)
-
-Получение видео с указанных YouTube каналов с поддержкой пагинации.
-
-**Конфигурация:**
-```json
-{
-  "channels": [
-    {"channel_id": "UC123456789", "name": "Channel Name 1"},
-    {"channel_id": "UC987654321", "name": "Channel Name 2"}
-  ],
-  "order": "viewCount",
-  "max_results": 10,
-  "license": "creativeCommon"
-}
-```
-
-**Параметры config:**
-
-| Параметр | Тип | Обязательный | По умолчанию | Описание |
-|----------|-----|--------------|--------------|----------|
-| `channels` | array[object] | ✅ | - | Список каналов с `channel_id` и `name` |
-| `order` | string | ❌ | `viewCount` | Сортировка: `date`, `rating`, `relevance`, `viewCount` |
-| `max_results` | integer | ❌ | `10` | Максимум результатов на канал (1-50) |
-| `license` | string | ❌ | `creativeCommon` | Фильтр лицензии: `any`, `creativeCommon` |
-
-**Примечание:** Адаптер автоматически сохраняет состояние пагинации (`current_channel_index`, `last_page_token`) в config источника после каждого сканирования.
-
-**Пример создания:**
-```bash
-curl -X POST http://localhost:8000/sources \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "youtube_channels",
-    "config": {
-      "channels": [
-        {"channel_id": "UCqECaJ8Gagnn7YCbPEzWH6g", "name": "Tom Scott"},
-        {"channel_id": "UCHnyfMqiRRG1u-2MsSQLbXA", "name": "Veritasium"}
-      ],
-      "order": "date",
-      "max_results": 5
-    },
-    "publishers": ["youtube_shorts"]
-  }'
-```
-
-### 3. Filesystem (`filesystem`)
+### 1. Filesystem (`filesystem`)
 
 Сканирование локальной папки с видеофайлами.
 
@@ -292,6 +206,92 @@ curl -X POST http://localhost:8000/sources \
       "path": "/media/filesystem_source_video"
     },
     "publishers": ["s3"]
+  }'
+```
+
+### 2. YouTube Search (`youtube_search`)
+
+Поиск видео на YouTube по запросу.
+
+**Конфигурация:**
+```json
+{
+  "query": "funny cats",
+  "license": "creativeCommon",
+  "max_results": 10,
+  "order": "relevance"
+}
+```
+
+**Параметры config:**
+
+| Параметр | Тип | Обязательный | По умолчанию | Описание |
+|----------|-----|--------------|--------------|----------|
+| `query` | string | ✅ | - | Поисковый запрос |
+| `license` | string | ❌ | `creativeCommon` | Фильтр лицензии: `any`, `creativeCommon` |
+| `max_results` | integer | ❌ | `10` | Максимум результатов (1-50) |
+| `order` | string | ❌ | `relevance` | Сортировка: `date`, `rating`, `relevance`, `title`, `viewCount` |
+
+**Пример создания:**
+```bash
+curl -X POST http://localhost:8000/sources \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "youtube_search",
+    "config": {
+      "query": "cartoon spongebob",
+      "license": "creativeCommon",
+      "max_results": 20,
+      "order": "viewCount"
+    },
+    "publishers": ["youtube_shorts"],
+    "strategy": ["simple_cut"]
+  }'
+```
+
+### 3. YouTube Channels (`youtube_channels`)
+
+Получение видео с указанных YouTube каналов с поддержкой пагинации.
+
+**Конфигурация:**
+```json
+{
+  "channels": [
+    {"channel_id": "UC123456789", "name": "Channel Name 1"},
+    {"channel_id": "UC987654321", "name": "Channel Name 2"}
+  ],
+  "order": "viewCount",
+  "max_results": 10,
+  "license": "creativeCommon"
+}
+```
+
+**Параметры config:**
+
+| Параметр | Тип | Обязательный | По умолчанию | Описание |
+|----------|-----|--------------|--------------|----------|
+| `channels` | array[object] | ✅ | - | Список каналов с `channel_id` и `name` |
+| `order` | string | ❌ | `viewCount` | Сортировка: `date`, `rating`, `relevance`, `viewCount` |
+| `max_results` | integer | ❌ | `10` | Максимум результатов на канал (1-50) |
+| `license` | string | ❌ | `creativeCommon` | Фильтр лицензии: `any`, `creativeCommon` |
+
+**Примечание:** Адаптер автоматически сохраняет состояние пагинации (`current_channel_index`, `last_page_token`) в config источника после каждого сканирования.
+
+**Пример создания:**
+```bash
+curl -X POST http://localhost:8000/sources \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "youtube_channels",
+    "config": {
+      "channels": [
+        {"channel_id": "UCqECaJ8Gagnn7YCbPEzWH6g", "name": "Tom Scott"},
+        {"channel_id": "UCHnyfMqiRRG1u-2MsSQLbXA", "name": "Veritasium"}
+      ],
+      "order": "date",
+      "max_results": 5
+    },
+    "publishers": ["youtube_shorts"]
   }'
 ```
 
