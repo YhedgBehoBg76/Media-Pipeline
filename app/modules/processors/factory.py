@@ -2,15 +2,17 @@
 from typing import Dict, Type, List, Union
 from app.modules.processors.base import ProcessingStrategy
 from app.modules.processors.pipeline import ProcessingPipeline
+
 from app.modules.processors.steps.simple_cut import SimpleCutStep
+from app.modules.processors.steps.subtitles import ApplySubtitlesStep
 
 
 class ProcessorFactory:
     """Фабрика для создания процессоров видео (поддерживает pipeline)"""
 
     _steps: Dict[str, Type[ProcessingStrategy]] = {
-        "simple_cut": SimpleCutStep,
-        # "subtitles": SubtitlesStep
+        "simple_cut" : SimpleCutStep,
+        "apply_subtitles" : ApplySubtitlesStep
     }
 
     @classmethod
@@ -21,7 +23,7 @@ class ProcessorFactory:
         Args:
             strategy_config:
                 - Строка: "simple_cut" (одиночный шаг)
-                - Список: ["simple_cut", "subtitles"] (пайплайн)
+                - Список: ["simple_cut", "apply_subtitles"] (пайплайн)
 
         Returns:
             Экземпляр ProcessingStrategy или ProcessingPipeline

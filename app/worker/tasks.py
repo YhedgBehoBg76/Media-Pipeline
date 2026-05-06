@@ -329,7 +329,7 @@ orchestrator = MediaOrchestrator(
 celery_app.conf.beat_schedule = {
     "update-unpublished-media-status": {
         "task": "app.worker.tasks.update_unpublished_status",
-        "schedule": crontab(hour="*/2"),
+        "schedule": crontab(minute="*/1"),
     },
 
     "publish-uploaded-to-s3-media": {

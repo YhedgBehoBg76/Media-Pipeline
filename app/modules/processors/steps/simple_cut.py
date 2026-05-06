@@ -11,22 +11,28 @@ class SimpleCutStep(ProcessingStrategy):
 
     def process(self, input_path: str, output_path: str, params: dict = None) -> bool:
         """
-        Обрезает видео до указанной длительности и кропает в 9:16.
+        кропает в 9:16.
         """
-
+        # ffmpeg -fflags +genpts+igndts -err_detect ignore_err -i /tmp/media/1/segments/source_media_id_1_c9d53268_seg_0.mp4 -vf "crop=ih*(9/16):ih" -c:v libx264 -preset ultrafast -crf 23 -c:a aac -b:a 128k -movflags +faststart -y /tmp/media/1/test_output.mp4
         cmd = [
             "ffmpeg",
+            "-fflags", "+genpts+igndts",  # починить временные метки
+            "-err_detect", "ignore_err",  # игнорировать битые пакеты
             "-i", input_path,
             "-vf", "crop=ih*(9/16):ih",
-            "-c:a", "copy",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-movflags", "+faststart",
             "-y",
             output_path
         ]
 
-        with open(output_path, "a"):
-            result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True)
 
         if result.returncode != 0:
-            raise Exception(f"[SimpleCutStrategy] FFmpeg error: {result.stderr}")
+            raise Exception(f"[SimpleCutStep] FFmpeg error: {result.stderr}")
 
         return True

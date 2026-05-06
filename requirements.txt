@@ -14,4 +14,6 @@ google-auth-oauthlib==1.2.0
 google-auth-httplib2==0.2.0
 yamlloader
 python-statemachine>=2.3.0
+ffmpeg-python
 httpx
+faster-whisper

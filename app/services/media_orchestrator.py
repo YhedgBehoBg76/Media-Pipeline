@@ -28,8 +28,8 @@ class MediaOrchestrator:
     }
 
     TASKS_PATH = "/tmp/media"
-    # при скачивании - создается папка /tmp/media/item_{item_id}
-    # при сегментации - создается папка /tmp/media/item_{item_id}/segments
+    # при скачивании - создается папка /tmp/media/{item_id}
+    # при сегментации - создается папка /tmp/media/{item_id}/segments
 
     def __init__(
             self,
@@ -219,18 +219,6 @@ class MediaOrchestrator:
             func.date(Publication.published_at) == today
         ).count()
         return max(0, limit - published)
-
-    # def _build_publish_params(self, platform: str, base_metadata: dict) -> dict:
-    #     """Собирает publish_params для конкретной платформы: дефолты + метаданные"""
-    #     defaults = self.platforms_config.get(platform, {}).get("upload_defaults", {})
-    #     merged = {**defaults, **base_metadata}
-    #
-    #     merged["title"] = merged.get("title")
-    #     merged["description"] = merged.get("description")[:5000]
-    #     merged.setdefault("tags", [])
-    #     merged.setdefault("platform", platform)
-    #
-    #     return merged
 
 
     @staticmethod

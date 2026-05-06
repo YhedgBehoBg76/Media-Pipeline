@@ -1,8 +1,15 @@
 
 import os
-import shutil
+import uuid
+import pathlib
+import logging
+
 from typing import List
 from app.modules.processors.base import ProcessingStrategy
+
+
+logger = logging.getLogger(__name__)
+
 
 class ProcessingPipeline(ProcessingStrategy):
     """
@@ -52,11 +59,14 @@ class ProcessingPipeline(ProcessingStrategy):
         try:
             for i, step in enumerate(self.steps):
                 if i < len(self.steps) - 1:
-                    temp_path = f"/tmp/media/temp_{i}_{step.name}.mp4"
+                    tp = pathlib.Path(f"/tmp/media/temp_{i}_{step.name}_{uuid.uuid4().hex}.mp4").resolve()
+                    temp_path = str(tp)
                     temp_files.append(temp_path)
                     target_path = temp_path
                 else:
                     target_path = output_path
+
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
                 success = step.process(current_path, target_path, params)
 
@@ -68,11 +78,12 @@ class ProcessingPipeline(ProcessingStrategy):
             return True
 
         except Exception as e:
-            self._cleanup_temp_files(temp_files)
-            raise Exception(f"[ProcessingPipeline] pipeline failed: {e}")
+            #self._cleanup_temp_files(temp_files)
+            raise Exception(f"[ProcessingPipeline] pipeline failed: {e}, temp_files: {temp_files}")
 
         finally:
-            self._cleanup_temp_files(temp_files)
+            pass
+            #self._cleanup_temp_files(temp_files)
 
     @staticmethod
     def _cleanup_temp_files(temp_files: List[str]):
