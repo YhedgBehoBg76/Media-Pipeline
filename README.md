@@ -300,13 +300,38 @@ curl -X POST http://localhost:8000/sources \
 Стратегия определяет как видео будет обработано перед публикацией. Параметр `strategy` — это список обработчиков (processors), которые применяются к видео последовательно в рамках пайплайна.
 
 **Реализованные обработчики:**
-- `simple_cut` — обрезка видео в формат 16:9 (или тот, который указан в `platforms.yaml`). **Важно:** указание не одинаковых `aspect_ratio` у платформ в `platforms.yaml` может вызвать ошибку при нарезке.
+
+их список можно получить через метод ProcessorFactory.get_available_steps() -> list[str]
+
+### SimpleCutStep
+обрезка видео в формат 16:9 (или тот, который указан в `platforms.yaml`). **Важно:** указание не одинаковых `aspect_ratio` у платформ в `platforms.yaml` может вызвать ошибку при нарезке.
+
+### ApplySubtitlesStep
+Добавление субтитров к видео. 
+
+*Примечание*: у каждого обработчика есть свойство name(str). ProcessorFactory.get_processor ожидает получить str | list[str] таких свойств:
+```python
+all_available_steps = ProcessorFactory.get_available_steps()
+#["simple_cut", "apply_subtitles", ...]
+pipeline = ProcessorFactory.get_processor(all_available_steps)
+```
 
 **Как работает пайплайн обработки:**
 
 Пайплайн (`ProcessingPipeline`) реализует композитный паттерн — объединяет несколько стратегий обработки в цепочку. Каждый шаг получает результат предыдущего шага и передаёт свой результат следующему.
 
-Пример создания пайплайна обработчиков:
+Примеры создания пайплайна обработчиков:
+
+Пример 1(Через фабрику процессоров и имена обработчиков):
+```python
+pipeline = ProcessorFactory.get_processor([
+    'simple_cut',
+    'apply_subtitles'
+])
+pipeline.process("input.mp4", "output.mp4", params)
+```
+
+Пример 2(Напрямую через класс пайплайна обработки и экземпляры обработчиков):
 ```python
 pipeline = ProcessingPipeline([
     SimpleCutStep(),
@@ -328,7 +353,7 @@ fixed_duration_segmenter:
 При создании источника вы указываете список стратегий в поле `strategy`. Например:
 ```json
 {
-  "strategy": ["simple_cut"]
+  "strategy": ["simple_cut", "apply_subtitles"]
 }
 ```
 
