@@ -306,12 +306,11 @@ curl -X POST http://localhost:8000/sources \
 
 Пайплайн (`ProcessingPipeline`) реализует композитный паттерн — объединяет несколько стратегий обработки в цепочку. Каждый шаг получает результат предыдущего шага и передаёт свой результат следующему.
 
-Пример из кода (`app/modules/processors/pipeline.py`):
+Пример создания пайплайна обработчиков:
 ```python
 pipeline = ProcessingPipeline([
     SimpleCutStep(),
-    LightEffectsStep(),
-    SubtitlesStep()
+    ApplySubtitlesStep(),
 ])
 pipeline.process("input.mp4", "output.mp4", params)
 ```
