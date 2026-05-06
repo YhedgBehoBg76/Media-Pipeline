@@ -18,8 +18,7 @@ class ProcessingPipeline(ProcessingStrategy):
     Пример:
         pipeline = ProcessingPipeline([
             SimpleCutStep(),
-            LightEffectsStep(),
-            SubtitlesStep()
+            ApplySubtitlesStep(),
         ])
         pipeline.process("input.mp4", "output.mp4", params)
     """
@@ -78,12 +77,12 @@ class ProcessingPipeline(ProcessingStrategy):
             return True
 
         except Exception as e:
-            #self._cleanup_temp_files(temp_files)
+            self._cleanup_temp_files(temp_files)
             raise Exception(f"[ProcessingPipeline] pipeline failed: {e}, temp_files: {temp_files}")
 
         finally:
             pass
-            #self._cleanup_temp_files(temp_files)
+            self._cleanup_temp_files(temp_files)
 
     @staticmethod
     def _cleanup_temp_files(temp_files: List[str]):
